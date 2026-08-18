@@ -1,9 +1,15 @@
-"""运行配置：所有项支持环境变量覆盖，便于本地与部署切换。"""
+"""运行配置：从 .env 或进程环境变量读取，支持本地与部署切换。"""
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+# 加载项目根目录下的 .env；已存在的进程环境变量优先级更高。
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(PROJECT_ROOT / ".env")
 
 
 # 配置类为不可变对象，避免运行期被意外修改。
