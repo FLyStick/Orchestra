@@ -1,22 +1,16 @@
+"""路由结果契约：策略、复杂度、子任务与预算一次下发。"""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 from .strategies import StrategyType
+from .subtask import SubtaskSpec
 from .task import TokenBudget
 
-
-@dataclass(frozen=True)
-class SubtaskSpec:
-    id: str
-    goal: str
-    dependencies: tuple[str, ...] = ()
-    tools: tuple[str, ...] = ()
-    agent_role: str = "generalist"
-    metadata: dict[str, Any] = field(default_factory=dict)
+__all__ = ["RoutingDecision", "SubtaskSpec"]
 
 
+# 子任务与依赖关系由 Router 生成，DAG 策略按此调度。
 @dataclass(frozen=True)
 class RoutingDecision:
     strategy: StrategyType = StrategyType.SIMPLE

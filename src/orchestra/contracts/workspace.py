@@ -1,3 +1,4 @@
+"""Workspace 抽象契约，文件与内存实现均遵循该协议。"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ class WorkspaceConfig:
 
 
 @runtime_checkable
+# 策略层只依赖该协议，不关心底层是文件系统还是 Redis。
 class Workspace(Protocol):
     @property
     def session_id(self) -> str:

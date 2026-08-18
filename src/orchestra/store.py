@@ -1,0 +1,251 @@
+"""SQLite 持久化：任务、事件与 Token 用量。"""
+from __future__ import annotations
+
+import json
+import sqlite3
+import threading
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from .contracts.task import TaskInput, TaskStatus
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+# P2 先用 SQLite 与进程内锁完成轻量持久化，后续可替换为 Postgres/Temporal。
+class SQLiteStore:
+    def __init__(self, db_path: Path) -> None:
+        self.path = db_path
+        if self.path.parent != Path("."):
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
+        self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        self._init_schema()
+
+    def _init_schema(self) -> None:
+        with self._lock:
+            # 三张核心表：任务、事件、Token 用量；索引按 task_id 查询优化。
+            self._conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS tasks (
+                    task_id TEXT PRIMARY KEY,
+                    query TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    context_json TEXT NOT NULL,
+                    strategy TEXT,
+                    status TEXT NOT NULL,
+                    result_json TEXT,
+                    error TEXT,
+                    duration_ms INTEGER,
+                    budget_json TEXT,
+                    max_iterations INTEGER NOT NULL DEFAULT 10,
+                    workspace_enabled INTEGER NOT NULL DEFAULT 1,
+                    metadata_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS task_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS token_usage (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    input_tokens INTEGER NOT NULL,
+                    output_tokens INTEGER NOT NULL,
+                    model TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_events_task ON task_events(task_id, id);
+                CREATE INDEX IF NOT EXISTS idx_tokens_task ON token_usage(task_id);
+                """
+            )
+            self._conn.commit()
+
+    # 落库即提交任务，后续执行通过 task_id 恢复上下文。
+    def create_task(self, task: TaskInput, task_id: str | None = None) -> str:
+        task_id = task_id or uuid.uuid4().hex
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO tasks (
+                    task_id, query, session_id, user_id, context_json, strategy,
+                    status, result_json, error, duration_ms, budget_json,
+                    max_iterations, workspace_enabled, metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    task.query,
+                    task.session_id,
+                    task.user_id,
+                    json.dumps(task.context, ensure_ascii=False),
+                    task.strategy,
+                    TaskStatus.PENDING.value,
+                    None,
+                    None,
+                    None,
+                    json.dumps(
+                        {
+                            "total_tokens": task.budget.total_tokens,
+                            "per_agent_tokens": task.budget.per_agent_tokens,
+                            "allow_model_fallback": task.budget.allow_model_fallback,
+                        }
+                    )
+                    if task.budget
+                    else None,
+                    task.max_iterations,
+                    int(task.workspace_enabled),
+                    json.dumps(task.metadata, ensure_ascii=False),
+                    now,
+                    now,
+                ),
+            )
+            self._conn.commit()
+        return task_id
+
+    def get_task(self, task_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+        if row is None:
+            return None
+        return self._row_to_task(row)
+
+    def _row_to_task(self, row: sqlite3.Row) -> dict[str, Any]:
+        task = {
+            "task_id": row["task_id"],
+            "query": row["query"],
+            "session_id": row["session_id"],
+            "user_id": row["user_id"],
+            "context": json.loads(row["context_json"] or "{}"),
+            "strategy": row["strategy"],
+            "status": row["status"],
+            "result": json.loads(row["result_json"]) if row["result_json"] else None,
+            "error": row["error"],
+            "duration_ms": row["duration_ms"],
+            "budget": json.loads(row["budget_json"]) if row["budget_json"] else None,
+            "max_iterations": row["max_iterations"],
+            "workspace_enabled": bool(row["workspace_enabled"]),
+            "metadata": json.loads(row["metadata_json"] or "{}"),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "token_usage": {},
+        }
+        task["token_usage"] = self.aggregate_token_usage(row["task_id"])
+        return task
+
+    def update_task(
+        self,
+        task_id: str,
+        *,
+        status: TaskStatus,
+        strategy: str | None = None,
+        result: Any = None,
+        error: str | None = None,
+        duration_ms: int | None = None,
+    ) -> None:
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                """
+                UPDATE tasks
+                SET status = ?, strategy = COALESCE(?, strategy), result_json = ?,
+                    error = ?, duration_ms = COALESCE(?, duration_ms), updated_at = ?
+                WHERE task_id = ?
+                """,
+                (
+                    status.value,
+                    strategy,
+                    json.dumps(result, ensure_ascii=False) if result is not None else None,
+                    error,
+                    duration_ms,
+                    now,
+                    task_id,
+                ),
+            )
+            self._conn.commit()
+
+    # 事件使用自增 id，SSE 可按 last_id 增量拉取。
+    def append_event(
+        self,
+        task_id: str,
+        event_type: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        now = _now()
+        with self._lock:
+            cursor = self._conn.execute(
+                "INSERT INTO task_events (task_id, event_type, payload_json, occurred_at) VALUES (?, ?, ?, ?)",
+                (task_id, event_type, json.dumps(payload or {}, ensure_ascii=False), now),
+            )
+            event_id = cursor.lastrowid
+            self._conn.commit()
+        return {"id": event_id, "task_id": task_id, "event_type": event_type, "payload": payload or {}, "occurred_at": now}
+
+    def list_events(self, task_id: str, after_id: int = 0) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, task_id, event_type, payload_json, occurred_at FROM task_events WHERE task_id = ? AND id > ? ORDER BY id",
+                (task_id, after_id),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "task_id": row["task_id"],
+                "event_type": row["event_type"],
+                "payload": json.loads(row["payload_json"] or "{}"),
+                "occurred_at": row["occurred_at"],
+            }
+            for row in rows
+        ]
+
+    def record_token_usage(
+        self,
+        task_id: str,
+        agent_id: str,
+        input_tokens: int,
+        output_tokens: int,
+        model: str,
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO token_usage (task_id, agent_id, input_tokens, output_tokens, model, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (task_id, agent_id, input_tokens, output_tokens, model, _now()),
+            )
+            self._conn.commit()
+
+    def get_token_usage(self, task_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT agent_id, input_tokens, output_tokens, model FROM token_usage WHERE task_id = ? ORDER BY id",
+                (task_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    # 汇总 Token 用量，供任务结果与成本统计使用。
+    def aggregate_token_usage(self, task_id: str) -> dict[str, int]:
+        usage = self.get_token_usage(task_id)
+        return {
+            "input_tokens": sum(row["input_tokens"] for row in usage),
+            "output_tokens": sum(row["output_tokens"] for row in usage),
+            "calls": len(usage),
+        }
+
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()
+
+    @staticmethod
+    def is_terminal(status: str) -> bool:
+        return status in {TaskStatus.SUCCEEDED.value, TaskStatus.FAILED.value, TaskStatus.CANCELLED.value}
