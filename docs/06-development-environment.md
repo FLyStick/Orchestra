@@ -23,7 +23,13 @@ pip install -e .
 
 ## 3. 启动服务
 
-默认使用 Mock LLM：
+首次运行前先复制 `.env.example` 为 `.env`：
+
+```powershell
+Copy-Item .env.example .env
+```
+
+默认无 API Key 时使用 Mock LLM：
 
 ```powershell
 python -m orchestra.main
@@ -79,6 +85,20 @@ curl http://127.0.0.1:8000/api/v1/tasks/<task_id>
 curl -N http://127.0.0.1:8000/api/v1/tasks/<task_id>/events
 ```
 
+提交 React 任务（Mock 下会自动模拟一次 `rag_search` 工具调用）：
+
+```powershell
+curl -X POST http://127.0.0.1:8000/api/v1/tasks `
+  -H "Content-Type: application/json" `
+  -d '{\"query\": \"请调用rag_search查询报销标准\", \"session_id\": \"demo-react\"}'
+```
+
+查看会话工作区：
+
+```powershell
+curl http://127.0.0.1:8000/api/v1/sessions/demo-react/workspace
+```
+
 ## 6. 运行测试
 
 ```powershell
@@ -92,8 +112,10 @@ python -m unittest discover -s tests -v
 
 - `src/orchestra/api.py`：FastAPI 入口与 REST/SSE 接口
 - `src/orchestra/executor.py`：任务执行器，负责路由、执行、Token 记录
-- `src/orchestra/router.py`：规则路由与复杂度评分
-- `src/orchestra/strategies/`：Simple 与 DAG 策略
+- `src/orchestra/router.py`：规则路由、复杂度评分与 React 路由
+- `src/orchestra/budget.py`：Token 总预算、动态上限与模型降级
+- `src/orchestra/tools.py`：RAG 检索与 Workspace 工具注册
+- `src/orchestra/strategies/`：Simple、DAG 与 React 策略
 - `src/orchestra/store.py`：SQLite 任务、事件与 Token 持久化
 - `src/orchestra/llm.py`：Mock 与 OpenAI 兼容 Provider
 - `src/orchestra/workspace/`：本地文件与内存 Workspace

@@ -22,6 +22,12 @@ class RouterTest(unittest.TestCase):
         self.assertGreaterEqual(decision.complexity_score, 0.3)
         self.assertGreaterEqual(len(decision.subtasks), 2)
 
+    def test_react_marker_routes_to_react(self) -> None:
+        decision = self.router.route(
+            TaskInput(query="请调用rag_search检索年假制度", session_id="s1")
+        )
+        self.assertEqual(decision.strategy, StrategyType.REACT)
+
     def test_forced_strategy_is_respected(self) -> None:
         decision = self.router.route(
             TaskInput(query="你好", session_id="s1", strategy="dag")

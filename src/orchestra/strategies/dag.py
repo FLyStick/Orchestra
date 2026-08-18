@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import asyncio
 
+from ..budget import TokenBudgetTracker
 from ..contracts.strategies import BaseStrategy, StrategyContext, StrategyResult, StrategyType
 from ..contracts.subtask import SubtaskSpec
-from ..llm import LLMResult, LLMService
+from ..llm import LLMResult, LLMService, estimate_tokens
 
 
 class DAGStrategy(BaseStrategy):
@@ -41,6 +42,7 @@ class DAGStrategy(BaseStrategy):
 
         Raises:
             RuntimeError: 子任务之间存在循环依赖或缺失依赖时抛出。
+            BudgetExceededError: 总预算不足以发起下一次 LLM 调用时抛出。
         """
         # 没有子任务时兜底：把整个查询当作唯一子任务 t1。
         subtasks = list(context.subtasks) or [SubtaskSpec(id="t1", goal=context.query)]
@@ -54,12 +56,8 @@ class DAGStrategy(BaseStrategy):
         rows: list[LLMResult] = []
         # 信号量：限制同时执行的子任务数量。
         semaphore = asyncio.Semaphore(self._max_parallel)
-
-        def lazy_limit() -> int | None:
-            """返回单次 LLM 调用的 token 上限；未配置预算时返回 None（不限制）。"""
-            if context.budget and context.budget.per_agent_tokens > 0:
-                return context.budget.per_agent_tokens
-            return None
+        # 预算跟踪器：Simple/DAG/React 共用同一套总额限制与降级逻辑。
+        tracker = TokenBudgetTracker(context.budget)
 
         async def run_subtask(spec: SubtaskSpec) -> tuple[str, str]:
             """执行单个子任务：调用 LLM 并把结果写入工作区。
@@ -77,8 +75,18 @@ class DAGStrategy(BaseStrategy):
                     },
                     {"role": "user", "content": spec.goal},
                 ]
-                # 调用 LLM 完成子任务，并应用预算限制。
-                result = await self._llm.complete(messages, max_tokens=lazy_limit())
+                input_estimate = estimate_tokens(
+                    "".join(m.get("content", "") for m in messages)
+                )
+                tracker.ensure_available(input_estimate)
+                model = tracker.choose_model(self._llm.default_model, self._llm.fallback_model)
+                # 调用 LLM 完成子任务，并应用总预算与单 Agent 预算限制。
+                result = await self._llm.complete(
+                    messages,
+                    max_tokens=tracker.next_max_tokens(input_estimate),
+                    model=model,
+                )
+                tracker.record(result.input_tokens, result.output_tokens)
                 # 把子任务结果落盘到工作区 subtasks/{id}.md，便于追溯。
                 await context.workspace.write(f"subtasks/{spec.id}.md", result.text)
                 # 记录本次调用，用于最终统计 token 用量。
@@ -110,8 +118,16 @@ class DAGStrategy(BaseStrategy):
             {"role": "system", "content": "你是任务汇总助手，负责把子任务结果整理成最终答案。"},
             {"role": "user", "content": f"汇总以下子任务结果：\n{joined}"},
         ]
+        input_estimate = estimate_tokens("".join(m.get("content", "") for m in messages))
+        tracker.ensure_available(input_estimate)
+        model = tracker.choose_model(self._llm.default_model, self._llm.fallback_model)
         # 调用 LLM 生成最终汇总答案。
-        final = await self._llm.complete(messages, max_tokens=lazy_limit())
+        final = await self._llm.complete(
+            messages,
+            max_tokens=tracker.next_max_tokens(input_estimate),
+            model=model,
+        )
+        tracker.record(final.input_tokens, final.output_tokens)
         # 最终答案写入工作区根目录 answer.md。
         await context.workspace.write("answer.md", final.text)
         rows.append(final)

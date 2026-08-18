@@ -4,7 +4,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Callable
 
 from .subtask import SubtaskSpec
 from .task import TokenBudget
@@ -44,6 +44,7 @@ class StrategyContext:
     context: dict[str, Any] = field(default_factory=dict)
     max_iterations: int = 10
     subtasks: tuple[SubtaskSpec, ...] = ()
+    emit: Callable[[str, dict[str, Any]], None] | None = None
 
 
 class BaseStrategy(ABC):

@@ -2,7 +2,8 @@
 
 本模块是编排框架的"路由层"：根据用户请求的文本特征（长度、连接词、
 步骤性词汇、工具类词汇）计算一个复杂度分数，再依据分数决定采用
-简单策略（SIMPLE）还是 DAG 策略，并在 DAG 策略下把请求拆成多个子任务。
+简单策略（SIMPLE）、DAG 策略还是 React 工具循环策略，并在 DAG 策略下
+把请求拆成多个子任务。
 """
 from __future__ import annotations
 
@@ -23,6 +24,8 @@ MULTI_STEP_MARKERS = (
 )
 # 工具依赖标记：出现这些词说明请求可能依赖具体工具/文档资源。
 TOOL_MARKERS = ("合同", "文档", "制度", "报销单", "表格", "材料")
+# React 标记：出现这些词说明请求需要检索、审查或调用工具，优先走 React 循环。
+REACT_MARKERS = ("调用", "工具", "检索", "审查", "核实")
 # 分句切分正则：按这些连接词把请求拆成多个子句。
 SPLIT_PATTERN = re.compile(r"(?:并且|同时|以及|还有|然后|再|接下来)")
 # 串行依赖正则：出现这些词说明子任务之间存在先后顺序（串行依赖）。
@@ -135,24 +138,28 @@ class RuleRouter:
         """
         # 先计算请求的复杂度分数。
         score = self.scorer.score(task.query, task.context)
-        # 调用方未显式指定策略时，按复杂度阈值自动路由。
+        # 未拆分任务时保持空元组，避免后续分支引用未绑定变量。
+        subtasks: tuple[SubtaskSpec, ...] = ()
+        # 调用方未显式指定策略时，按复杂度阈值与 React 标记自动路由。
         if task.strategy:
             # 显式策略：把字符串转成枚举，非法值抛错。
             try:
                 strategy = StrategyType(task.strategy.lower())
             except ValueError as exc:
                 raise ValueError(f"unsupported strategy: {task.strategy}") from exc
-        else:
+            reason = f"explicit strategy: {strategy.value}"
+        elif any(marker in task.query for marker in REACT_MARKERS):
+            # 需要检索、审查或调用工具的请求优先走 React 工具循环。
+            strategy = StrategyType.REACT
+            reason = "query contains tool/react markers"
+        elif score >= self.threshold:
             # 自动路由：分数达到阈值走 DAG（多子任务），否则走 SIMPLE（单任务）。
-            strategy = StrategyType.DAG if score >= self.threshold else StrategyType.SIMPLE
-
-        subtasks: tuple[SubtaskSpec, ...] = ()
-        if strategy == StrategyType.DAG:
-            # DAG 策略：把请求拆成子任务，并记录决策原因（含分数与阈值）。
+            strategy = StrategyType.DAG
             subtasks = tuple(build_subtasks(task.query))
             reason = f"complexity_score={score:.2f}, threshold={self.threshold:.2f}"
         else:
-            # SIMPLE 策略：不拆子任务，直接记录原因。
+            # 低复杂度请求直接回答，不拆子任务。
+            strategy = StrategyType.SIMPLE
             reason = f"complexity_score={score:.2f}, routing to simple strategy"
 
         # 组装并返回路由决策对象。

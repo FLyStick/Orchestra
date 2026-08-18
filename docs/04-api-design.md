@@ -17,6 +17,8 @@
 | GET | /api/v1/tasks/{task_id}/events | SSE 订阅任务事件 |
 | GET | /healthz | 健康检查 |
 | GET | /api/v1/scenarios | 获取已配置业务场景 |
+| GET | /api/v1/sessions/{session_id}/workspace | 列出会话工作区文件与内容 |
+| GET | /api/v1/sessions/{session_id}/workspace/files/{path} | 读取工作区单个文件 |
 
 ## 3. TaskInput 示例
 
@@ -103,8 +105,12 @@ data: {"event_type": "task.completed", "task_id": "task-0001", "payload": {"stat
 - agent.completed
 - workspace.updated
 - token.updated
+- budget.fallback
+- tool.called
+- tool.completed
 - task.completed
 - task.failed
+- task.cancelled
 
 ## 8. 错误模型
 
@@ -132,4 +138,4 @@ data: {"event_type": "task.completed", "task_id": "task-0001", "payload": {"stat
 - workspace.py：WorkspaceConfig、Workspace Protocol
 - events.py：EventType、TaskEvent
 
-P2 起按该契约实现 FastAPI 路由与 Temporal Workflow，接口保持不变。
+P2/P3 已按该契约实现 FastAPI 路由；P3 增加 React 工具循环、RAG/Workspace 工具与 Token 预算降级事件。

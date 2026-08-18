@@ -8,8 +8,8 @@
 |---|---|---|
 | P0 方案设计 | 多智能体编排框架实现方案.md | 已完成 |
 | P1 调研设计 | docs/ 与 src/orchestra/contracts | 已完成 |
-| P2 最小闭环 | FastAPI API + 规则路由 + Simple/DAG + SQLite + SSE | 已完成（待安装依赖后运行） |
-| P3 能力增强 | React + Workspace + Token 预算 | 待启动 |
+| P2 最小闭环 | FastAPI API + 规则路由 + Simple/DAG + SQLite + SSE | 已完成 |
+| P3 能力增强 | React 工具循环 + RAG + Workspace + Token 预算降级 | 已完成 |
 | P4 原型与验证 | 2-3 个业务 Agent 原型及评测 | 待启动 |
 
 ## 环境准备
@@ -19,6 +19,7 @@ Conda 环境：`orchestra`。安装与运行步骤见 [docs/06-development-envir
 ```powershell
 conda activate orchestra
 cd D:\实习记录\组内项目\Orchestra
+Copy-Item .env.example .env
 pip install -r requirements-dev.txt
 pip install -e .
 python -m orchestra.main
@@ -27,15 +28,17 @@ python -m orchestra.main
 ## 目录结构
 
 ```text
-docs/                            P1/P2 设计文档与开发环境文档
+docs/                            P1-P3 设计文档与开发环境文档
 src/orchestra/
   api.py                         FastAPI 入口，REST/SSE 接口
   executor.py                    任务执行器
-  router.py                      规则路由与复杂度评分
+  router.py                      规则路由与 React/DAG 拆分
   store.py                       SQLite 任务/事件/Token 存储
   llm.py                         Mock 与 OpenAI 兼容 Provider
+  budget.py                      Token 总预算与模型降级
+  tools.py                       RAG/Workspace 工具注册
   contracts/                     核心数据契约与策略接口
-  strategies/                    Simple/DAG 策略
+  strategies/                    Simple/DAG/React 策略
   workspace/                     本地文件与内存 Workspace
 tests/                           单元测试与 API 集成测试
 多智能体编排框架实现方案.md       总体方案与实习经历条目

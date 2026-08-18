@@ -13,6 +13,7 @@ from .llm import LLMService
 from .router import RuleRouter
 from .store import SQLiteStore
 from .strategies.dag import DAGStrategy
+from .strategies.react import ReactStrategy
 from .strategies.simple import SimpleStrategy
 from .workspace.local_workspace import LocalWorkspace
 from .workspace.memory import MemoryWorkspace
@@ -32,6 +33,7 @@ class Executor:
         self.workspace_root = Path(workspace_root)
         self._simple = SimpleStrategy(llm_service)
         self._dag = DAGStrategy(llm_service)
+        self._react = ReactStrategy(llm_service)
         self._tasks: set[asyncio.Task[Any]] = set()
         self._cancel_flags: set[str] = set()
 
@@ -93,6 +95,11 @@ class Executor:
             if task_input.workspace_enabled
             else MemoryWorkspace(task_input.session_id)
         )
+
+        # 策略层通过 emit 回调推送 agent/tool/workspace/token 事件。
+        def emit(event_type: str, payload: dict[str, Any]) -> None:
+            self.store.append_event(task_id, event_type, payload)
+
         context = StrategyContext(
             task_id=task_id,
             query=task_input.query,
@@ -102,8 +109,17 @@ class Executor:
             context=task_input.context,
             max_iterations=task_input.max_iterations,
             subtasks=decision.subtasks,
+            emit=emit,
         )
-        strategy = self._simple if decision.strategy == StrategyType.SIMPLE else self._dag
+        if decision.strategy == StrategyType.SIMPLE:
+            strategy = self._simple
+        elif decision.strategy == StrategyType.DAG:
+            strategy = self._dag
+        elif decision.strategy == StrategyType.REACT:
+            strategy = self._react
+        else:
+            # 未接入的策略统一视为路由错误。
+            raise ValueError(f"unsupported strategy: {decision.strategy.value}")
         self.store.append_event(
             task_id,
             EventType.STRATEGY_STARTED.value,
