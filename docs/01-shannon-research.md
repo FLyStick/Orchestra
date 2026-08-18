@@ -21,7 +21,7 @@ Orchestra 值得借鉴的点：
 Orchestra 裁剪的点：
 
 - 不实现 WASI 沙箱、EKS/Firecracker 微虚拟机等重部署能力
-- 不照搬全部五类科学工作流，P1-P3 只落地 Simple、DAG、React、Swarm
+- 不照搬全部五类科学工作流，P1-P3 只落地 Simple、DAG、React；Swarm 作为后续扩展
 - 不复制多租户权限体系，先服务公司内部场景
 
 ## 2. 总体架构
@@ -101,7 +101,7 @@ Activities / Infrastructure
 | DAG / React 策略 | 保留，P2/P3 实现 | 覆盖多步骤与工具调用场景 |
 | Research 等科学工作流 | 暂不落地 | 公司场景暂不需要 |
 | Temporal | 保留，P2 接入 | 持久化与故障恢复可解释性强 |
-| Swarm | 保留，P4 实现 | 多智能体协作，但实现成本高 |
+| Swarm | 保留为后续扩展 | 多智能体协作，但实现成本高，P4 不依赖 |
 | Workspace | 保留，P3 实现 | 支撑多智能体上下文共享 |
 | Token 预算 | 保留，P3 实现 | 成本可控是重要成果 |
 | WASI / VM 沙箱 | 不采纳 | 内部 MVP 不需要重沙箱 |
@@ -113,4 +113,4 @@ Activities / Infrastructure
 - 确定核心契约：TaskInput、TaskStatus、RoutingDecision、StrategyContext、Workspace、TaskEvent
 - 确定 P2 范围：先做 Simple + DAG，用规则路由，接入 Temporal 前保持可替换边界
 - 确定 P3 范围：React、Workspace、Token 预算、SSE
-- 确定 P4 范围：Swarm、业务原型与评测
+- 确定 P4 范围：人事制度问答、风控条款审查 2 个业务原型与评测；Swarm 暂不纳入

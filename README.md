@@ -10,7 +10,7 @@
 | P1 调研设计 | docs/ 与 src/orchestra/contracts | 已完成 |
 | P2 最小闭环 | FastAPI API + 规则路由 + Simple/DAG + SQLite + SSE | 已完成 |
 | P3 能力增强 | React 工具循环 + RAG + Workspace + Token 预算降级 | 已完成 |
-| P4 原型与验证 | 2-3 个业务 Agent 原型及评测 | 待启动 |
+| P4 原型与验证 | 人事制度问答 + 风控条款审查 2 个业务原型及评测 | 已完成（评测数据待实测回填） |
 
 ## 环境准备
 
