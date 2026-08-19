@@ -140,3 +140,9 @@ data: {"event_type": "task.completed", "task_id": "task-0001", "payload": {"stat
 
 P2/P3 已按该契约实现 FastAPI 路由；P3 增加 React 工具循环、RAG/Workspace 工具与 Token 预算降级事件。
 P4 将 /api/v1/scenarios 改为读取 scenarios.py 的场景配置，返回 strategy/tools/subtasks 明细；DAG 子任务支持声明 tools 并在执行时发出 agent.started/agent.completed 与 tool.called/tool.completed 事件。
+
+## 10. DAG + React 组合契约
+
+SubtaskSpec 已增加 strategy 字段：direct | react | dag。RoutingDecision 顶层 strategy 仍可为 dag，DAG 节点通过 SubtaskSpec.strategy 表达 React 节点；API 场景清单会随 subtask 返回节点 strategy。
+
+P4.5 已落地：React 节点复用同一工具循环，事件携带 subtask_id / agent_role，Token 预算全局共享。

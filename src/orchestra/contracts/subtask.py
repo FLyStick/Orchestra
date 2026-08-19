@@ -12,5 +12,6 @@ class SubtaskSpec:
     goal: str #原始输入
     dependencies: tuple[str, ...] = ()
     tools: tuple[str, ...] = ()
+    strategy: str = "direct"  # direct | react | dag（递归 DAG 预留）
     agent_role: str = "generalist"
     metadata: dict[str, Any] = field(default_factory=dict) #附加元数据（如来源标记）

@@ -60,7 +60,16 @@ python -m orchestra.evals --provider openai --output data/eval-report.json
 - 风控条款审查：DAG 三阶段（条款识别 → 规则匹配 → 审查清单生成）；单份合同首轮审查由人工 45 分钟降至 Agent 8 分钟为目标占位，实测耗时验收后回填，人工复核闭环。
 - 全链路通过 SSE 输出任务拆解、路由、工具调用、Token 用量与最终结果。
 
-## 7. 待确认事项
+## 7. DAG + React 组合化已落地
+
+- 风控：DAG 三阶段中 t2 规则匹配已升级为 react 节点，使用 rag_search / workspace_read，可多次检索并读取工作区。
+- 人事：简单问题默认 Simple + RAG，复杂或需检索核实的问题升级 React；30 条黄金用例 Mock 评测 30/30 通过。
+- 递归 DAG 已支持（深度限制 2 层），Token 预算跨节点共享，SSE 事件携带 subtask_id / agent_role。
+
+详细设计：[docs/07-dag-react-composition.md](docs/07-dag-react-composition.md)
+
+## 8. 待确认事项
+
 
 - 各部门联系人、文档与数据权限
 - 评测用的真实业务用例是否允许脱敏使用

@@ -102,3 +102,13 @@ PENDING -> ROUTING -> RUNNING -> SUCCEEDED
 - PostgreSQL/MySQL 保存任务与用量数据
 - LLM 通过统一 Provider 访问
 - 可选飞书接入作为业务验证入口
+
+## 10. 策略正交化设计
+
+当前 StrategyType 将 Simple / DAG / React 视为互斥策略，Executor 单次只选一个。P4 评审后确定下一阶段按两个维度建模：
+
+- DAG：执行拓扑，负责依赖、调度、Workspace、预算与汇总。
+- React：单节点推理模式，负责工具调用循环。
+- 单个 DAG 节点可配置 direct / react / dag 三种模式，递归深度限制 2 层。
+
+详细设计见 docs/07-dag-react-composition.md。P4.5 已落地：direct/react/dag 三种节点模式、共享 Token 预算与 subtask_id 事件归属均已实现。

@@ -158,16 +158,18 @@ async def evaluate_cases(
             status = str(output.get("status") or "")
             strategy = str(output.get("strategy") or "")
             source_hit = case.expected_source in files
+            # P4.5 起 HR 简单问题走 Simple+RAG，复杂问题走 React+RAG；
+            # 只要命中知识来源且成功生成答案，两种通道均计入通过。
             passed = (
                 status == "succeeded"
-                and strategy == "react"
+                and strategy in ("simple", "react")
                 and source_hit
                 and bool(answer)
             )
             reasons: list[str] = []
             if status != "succeeded":
                 reasons.append(f"status={status}")
-            if strategy != "react":
+            if strategy not in ("simple", "react"):
                 reasons.append(f"strategy={strategy}")
             if not source_hit:
                 reasons.append(f"missing_source={case.expected_source}")
@@ -204,7 +206,7 @@ async def evaluate_cases(
         total_output_tokens=total_output,
         total_tokens=total_input + total_output,
         duration_seconds=duration_seconds,
-        note="目标通过率 87%（26/30）为验收占位，本报告为实际执行结果。",
+        note="P4.5 起 HR 走 Simple+RAG / React+RAG 双通道；87%（26/30）为验收占位，本报告为实际执行结果。",
         cases=case_results,
     )
 

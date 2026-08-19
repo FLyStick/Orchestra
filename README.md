@@ -11,6 +11,7 @@
 | P2 最小闭环 | FastAPI API + 规则路由 + Simple/DAG + SQLite + SSE | 已完成 |
 | P3 能力增强 | React 工具循环 + RAG + Workspace + Token 预算降级 | 已完成 |
 | P4 原型与验证 | 人事制度问答 + 风控条款审查 2 个业务原型、30 条黄金用例评测器 | 已完成（量化数据待实测回填） |
+| P4.5 组合编排 | DAG + React 正交化、节点级策略、Simple+RAG/React 路由 | 已完成 |
 
 ## 环境准备
 
@@ -55,6 +56,7 @@ tests/                           单元测试与 API 集成测试
 - docs/04-api-design.md  API 与接口设计
 - docs/05-business-scenarios.md  业务场景清单与验收口径
 - docs/06-development-environment.md  开发环境与部署文档
+- docs/07-dag-react-composition.md  DAG + React 组合编排设计（已实施）
 
 ## 开发验证
 

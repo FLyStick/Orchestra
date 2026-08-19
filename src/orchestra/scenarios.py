@@ -39,6 +39,7 @@ class ScenarioConfig:
                     "goal": spec.goal,
                     "dependencies": list(spec.dependencies),
                     "tools": list(spec.tools),
+                    "strategy": spec.strategy,
                     "agent_role": spec.agent_role,
                 }
                 for spec in self.subtasks
@@ -63,16 +64,12 @@ def _build_risk_subtasks() -> tuple[SubtaskSpec, ...]:
             id="t2",
             goal=(
                 "规则匹配：结合前置条款识别结果与内部风控规则，"
-                "逐条判定风险点并给出依据。"
+                "逐条判定风险点并给出依据；检索不足时主动调整检索词。"
             ),
             dependencies=("t1",),
-            tools=("rag_search",),
+            tools=("rag_search", "workspace_read"),
+            strategy="react",
             agent_role="risk_analyst",
-            metadata={
-                "tool_arguments": {
-                    "rag_search": {"query": "付款风险 验收风险 违约金风险 争议解决风险"}
-                }
-            },
         ),
         SubtaskSpec(
             id="t3",

@@ -1,15 +1,16 @@
-"""React 策略：模型在"思考-工具调用-观察"循环中完成多步任务。
+"""React 策略：模型在“思考-工具调用-观察”循环中完成多步任务。
 
 执行流程：
 1. 模型输出 JSON 工具调用 → 解析并执行工具；
-2. 把工具输出作为"观察"追加到对话历史；
-3. 模型不再输出工具调用时，生成最终答案；
+2. 把工具输出作为“观察”追加到对话历史；
+3. 信息不足时继续调用工具，信息充分后生成最终答案；
 4. 达到最大迭代次数仍未完成时，基于已有观察生成结论。
 """
 from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..budget import TokenBudgetTracker
@@ -64,6 +65,16 @@ def _estimate_messages(messages: list[dict[str, str]]) -> int:
     return estimate_tokens("".join(message.get("content", "") for message in messages))
 
 
+@dataclass
+class ReactNodeResult:
+    """一次 React 节点循环的结构化产出，供顶层策略与 DAG 节点复用。"""
+
+    output: str
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    rows: list[LLMResult] = field(default_factory=list)
+    trace: list[str] = field(default_factory=list)
+
+
 class ReactStrategy(BaseStrategy):
     """React（Reasoning + Acting）策略：迭代调用工具并结合观察生成答案。"""
 
@@ -86,22 +97,47 @@ class ReactStrategy(BaseStrategy):
         if context.emit is not None:
             context.emit(event_type, payload)
 
-    def _build_prompt(self, context: StrategyContext | None = None) -> str:
-        """构造系统提示词：说明工具调用格式并列出可用工具。"""
+    @staticmethod
+    def _with_node(
+        payload: dict[str, Any],
+        subtask_id: str | None,
+        agent_role: str | None,
+    ) -> dict[str, Any]:
+        """给事件附加 DAG 节点归属；顶层 React 事件不携带 subtask_id。"""
+        if subtask_id:
+            payload["subtask_id"] = subtask_id
+        if agent_role:
+            payload["agent_role"] = agent_role
+        return payload
+
+    def _build_prompt(
+        self,
+        context: StrategyContext | None = None,
+        tool_names: tuple[str, ...] | None = None,
+        agent_role: str | None = None,
+    ) -> str:
+        """构造系统提示词：列出节点可用工具与工具调用格式。"""
+        schemas = self._registry.list_schemas()
+        if tool_names is not None:
+            # DAG 节点可限制工具白名单，避免模型调用无关工具。
+            schemas = [
+                schema for schema in schemas
+                if schema["name"] in tool_names
+            ]
         schema_lines: list[str] = []
         # 把每个工具的名称、描述、参数 schema 拼成一行。
-        for schema in self._registry.list_schemas():
+        for schema in schemas:
             schema_lines.append(
                 f"- {schema['name']}: {schema['description']}，参数："
                 f"{json.dumps(schema['parameters'], ensure_ascii=False)}"
             )
         prompt = (
-            "你是 Orchestra 多智能体编排框架中的 React 推理 Agent。\n"
+            f"你是 Orchestra 多智能体编排框架中的 {agent_role or 'React 推理 Agent'}。\n"
             "需要外部信息时，只输出一个 JSON 工具调用，例如：\n"
-            '{"tool": "rag_search", "arguments": {"query": "报销标准"}}\n'
+            "{\"tool\": \"rag_search\", \"arguments\": {\"query\": \"报销标准\"}}\n"
             "可用工具：\n"
             + "\n".join(schema_lines)
-            + "\n收到工具输出后，不再调用工具，直接生成最终答案。"
+            + "\n收到工具输出后，如信息不足可继续调用工具；不再需要工具时，直接生成最终答案。"
         )
         # P4 人事制度问答：强制先检索制度文档，保证回答有据可依。
         if context and context.context.get("scenario_id") == "hr_policy_qa":
@@ -109,20 +145,52 @@ class ReactStrategy(BaseStrategy):
         return prompt
 
     async def execute(self, context: StrategyContext) -> StrategyResult:
-        """执行 React 循环：思考 → 工具调用 → 观察，直到产出最终答案。
+        """执行顶层 React 策略：复用节点循环并落盘最终答案。"""
+        tracker = TokenBudgetTracker(context.budget)
+        node_result = await self.run_node(
+            context,
+            tracker,
+            query=context.query,
+            max_iterations=context.max_iterations,
+        )
+        await self._write_answer(context, node_result.output, node_result.trace)
+        return self._build_result(
+            node_result.output,
+            node_result.tool_calls,
+            node_result.rows,
+        )
+
+    async def run_node(
+        self,
+        context: StrategyContext,
+        tracker: TokenBudgetTracker,
+        *,
+        query: str,
+        subtask_id: str | None = None,
+        agent_role: str | None = None,
+        max_iterations: int | None = None,
+        tool_names: tuple[str, ...] | None = None,
+    ) -> ReactNodeResult:
+        """执行一次可复用的 React 节点循环。
 
         Args:
-            context: 策略执行上下文（查询、预算、工作区、事件回调等）。
+            context: 执行上下文（工作区、事件回调、场景信息等）。
+            tracker: 共享 Token 预算跟踪器，DAG 内所有节点累计到同一预算。
+            query: 节点用户输入（DAG 节点为子任务目标与依赖结果）。
+            subtask_id: 所属 DAG 子任务 ID；为 None 表示顶层 React 策略。
+            agent_role: 节点角色名，用于事件归属与提示词。
+            max_iterations: 最大迭代次数；为 None 使用上下文默认值。
+            tool_names: 节点允许使用的工具；为 None 表示全部工具。
 
         Returns:
-            策略结果：最终答案、工具调用记录与 token 用量。
+            ReactNodeResult：最终答案、工具调用、LLM 调用与轨迹摘要。
         """
-        # 预算跟踪器：累计用量、动态收紧 max_tokens、预算不足时降级模型。
-        tracker = TokenBudgetTracker(context.budget)
-        # 对话历史：系统提示 + 用户问题，后续逐步追加助手输出与工具观察。
         messages: list[dict[str, str]] = [
-            {"role": "system", "content": self._build_prompt(context)},
-            {"role": "user", "content": context.query},
+            {
+                "role": "system",
+                "content": self._build_prompt(context, tool_names, agent_role),
+            },
+            {"role": "user", "content": query},
         ]
         # 所有 LLM 调用结果，用于统计 token 用量。
         rows: list[LLMResult] = []
@@ -130,9 +198,12 @@ class ReactStrategy(BaseStrategy):
         tool_calls: list[ToolCall] = []
         # 执行轨迹摘要，写入工作区便于追溯。
         trace: list[str] = []
-        
+        final: str | None = None
+        last_step = max_iterations or context.max_iterations
+
         # React 循环：最多迭代 max_iterations 次。
-        for step in range(1, context.max_iterations + 1):
+        for step in range(1, (max_iterations or context.max_iterations) + 1):
+            last_step = step
             # 预算耗尽则提前终止。
             if tracker.remaining <= 0:
                 break
@@ -143,23 +214,39 @@ class ReactStrategy(BaseStrategy):
             model = tracker.choose_model(self._llm.default_model, self._llm.fallback_model)
             if model and self._llm.fallback_model and model == self._llm.fallback_model:
                 # 发生模型降级时发出事件通知。
-                self._emit(context, EventType.BUDGET_FALLBACK.value, {"step": step, "model": model})
-            self._emit(context, EventType.AGENT_STARTED.value, {"step": step, "model": model})
+                self._emit(
+                    context,
+                    EventType.BUDGET_FALLBACK.value,
+                    self._with_node({"step": step, "model": model}, subtask_id, agent_role),
+                )
+            self._emit(
+                context,
+                EventType.AGENT_STARTED.value,
+                self._with_node({"step": step, "model": model}, subtask_id, agent_role),
+            )
             # 按剩余额度收紧本次调用的输出上限。
             max_tokens = tracker.next_max_tokens(input_estimate)
             result = await self._llm.complete(messages, max_tokens=max_tokens, model=model)
             # 记录实际用量并推送 token 更新事件。
             tracker.record(result.input_tokens, result.output_tokens)
             rows.append(result)
-            self._emit(context, EventType.TOKEN_UPDATED.value, {"step": step, "token_usage": tracker.usage})
+            self._emit(
+                context,
+                EventType.TOKEN_UPDATED.value,
+                self._with_node(
+                    {"step": step, "token_usage": tracker.usage},
+                    subtask_id,
+                    agent_role,
+                ),
+            )
             # 把模型输出追加到对话历史。
             messages.append({"role": "assistant", "content": result.text})
             # 解析输出：是工具调用还是最终答案？
             call = parse_tool_call(result.text)
             if call is None:
-                # 无工具调用 => 视为最终答案，写入工作区并返回。
-                await self._write_answer(context, result.text, trace)
-                return self._build_result(result.text, tool_calls, rows)
+                # 无工具调用 => 视为最终答案，直接结束循环。
+                final = result.text
+                break
             # 解析出工具调用：记录并执行。
             name = str(call.get("tool") or "")
             arguments = dict(call.get("arguments") or {})
@@ -167,40 +254,81 @@ class ReactStrategy(BaseStrategy):
             self._emit(
                 context,
                 EventType.TOOL_CALLED.value,
-                {"step": step, "tool": name, "arguments": arguments},
+                self._with_node(
+                    {"step": step, "tool": name, "arguments": arguments},
+                    subtask_id,
+                    agent_role,
+                ),
             )
-            # 从注册表查找工具并执行，异常统一转为失败输出。
-            tool = self._registry.get(name)
-            if tool is None:
-                # 工具不存在：给出可用工具列表作为观察。
-                available = ", ".join(schema["name"] for schema in self._registry.list_schemas())
-                output = f"工具不存在：{name}，可用工具：{available}"
+            # DAG 节点可声明工具白名单，减少模型误调工具。
+            allowed = not tool_names or name in tool_names
+            if not allowed:
+                available = ", ".join(tool_names or ())
+                output = f"工具不在当前节点可用列表：{name}，可用工具：{available}"
                 success = False
             else:
-                try:
-                    tool_result = await tool.run(arguments, context)
-                    output = tool_result.output
-                    success = tool_result.success
-                except Exception as exc:
-                    output = f"工具执行异常：{exc}"
+                # 从注册表查找工具并执行，异常统一转为失败输出。
+                tool = self._registry.get(name)
+                if tool is None:
+                    available = ", ".join(
+                        schema["name"] for schema in self._registry.list_schemas()
+                    )
+                    output = f"工具不存在：{name}，可用工具：{available}"
                     success = False
+                else:
+                    try:
+                        tool_result = await tool.run(arguments, context)
+                        output = tool_result.output
+                        success = tool_result.success
+                    except Exception as exc:
+                        output = f"工具执行异常：{exc}"
+                        success = False
             self._emit(
                 context,
                 EventType.TOOL_COMPLETED.value,
-                {"step": step, "tool": name, "success": success},
+                self._with_node(
+                    {"step": step, "tool": name, "success": success},
+                    subtask_id,
+                    agent_role,
+                ),
             )
-            # 工具输出落盘到工作区，供追溯与复用。
-            path = f"react/step_{step:02d}_{name}.md"
+            # 工具输出落盘到工作区，供追溯与复用；DAG 节点写入自身命名空间。
+            if subtask_id:
+                path = f"dag/{subtask_id}/step_{step:02d}_{name}.md"
+            else:
+                path = f"react/step_{step:02d}_{name}.md"
             await context.workspace.write(path, output)
-            self._emit(context, EventType.WORKSPACE_UPDATED.value, {"path": path})
+            self._emit(
+                context,
+                EventType.WORKSPACE_UPDATED.value,
+                self._with_node({"path": path}, subtask_id, agent_role),
+            )
             # 记录轨迹摘要（截断到 200 字符）。
             trace.append(f"[{step}] 调用 {name}{arguments} -> {output[:200]}")
             # 把工具输出作为"观察"追加到对话历史，进入下一轮思考。
             messages.append({"role": "user", "content": f"工具输出({name}): {output}"})
+
         # 达到最大迭代次数仍未产出最终答案：基于已有观察生成结论。
-        final = self._build_without_answer(trace)
-        await self._write_answer(context, final, trace)
-        return self._build_result(final, tool_calls, rows)
+        if final is None:
+            final = self._build_without_answer(trace)
+        self._emit(
+            context,
+            EventType.AGENT_COMPLETED.value,
+            self._with_node(
+                {
+                    "step": last_step,
+                    "model": rows[-1].model if rows else "unknown",
+                },
+                subtask_id,
+                agent_role,
+            ),
+        )
+        return ReactNodeResult(
+            output=final,
+            tool_calls=tool_calls,
+            rows=rows,
+            trace=trace,
+        )
 
     async def _write_answer(self, context: StrategyContext, final: str, trace: list[str]) -> None:
         """把最终答案与执行轨迹写入工作区并推送事件。"""
@@ -231,3 +359,4 @@ class ReactStrategy(BaseStrategy):
                 "model": rows[-1].model if rows else "unknown",
             },
         )
+

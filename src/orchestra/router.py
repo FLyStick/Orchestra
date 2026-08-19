@@ -157,9 +157,22 @@ class RuleRouter:
         #没有策略但是存在特定场景，走预定业务场景
         elif scenario:
             # P4 业务场景优先于通用复杂度规则，保证演示原型可复现。
-            strategy = scenario.strategy
-            subtasks = scenario.subtasks
-            reason = f"scenario_match={scenario.scenario_id}"
+            if (
+                scenario.scenario_id == "hr_policy_qa"
+                and score < self.threshold
+                and not any(marker in task.query for marker in REACT_MARKERS)
+            ):
+                # HR 高频单跳问题默认 Simple + RAG，降低延迟与成本；
+                # 复杂或需要检索核实的问题升级为 React 工具循环。
+                strategy = StrategyType.SIMPLE
+                reason = (
+                    f"scenario_match={scenario.scenario_id}, "
+                    f"complexity_score={score:.2f} -> simple+rag"
+                )
+            else:
+                strategy = scenario.strategy
+                subtasks = scenario.subtasks
+                reason = f"scenario_match={scenario.scenario_id}"
         
         elif any(marker in task.query for marker in REACT_MARKERS):
             # 需要检索、审查或调用工具的请求优先走 React 工具循环。

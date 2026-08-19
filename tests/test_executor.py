@@ -93,5 +93,25 @@ class ExecutorTest(unittest.TestCase):
         self.assertIn("tool.completed", event_types)
 
 
+    def test_hr_simple_task_uses_rag_tool(self) -> None:
+        output = asyncio.run(
+            self.executor.execute_sync(
+                TaskInput(
+                    query="公司年假有几天",
+                    session_id="session-hr",
+                    context={"department": "hr"},
+                )
+            )
+        )
+        self.assertEqual(output["status"], TaskStatus.SUCCEEDED.value)
+        self.assertEqual(output["strategy"], "simple")
+        self.assertIn("已根据 rag_search", output["result"])
+        rag_file = self.root / "workspaces" / "session-hr" / "rag" / "hr" / "leave-policy.md"
+        self.assertTrue(rag_file.exists())
+        events = self.store.list_events(output["task_id"])
+        event_types = [event["event_type"] for event in events]
+        self.assertIn("tool.called", event_types)
+        self.assertIn("tool.completed", event_types)
+
 if __name__ == "__main__":
     unittest.main()
