@@ -139,3 +139,4 @@ data: {"event_type": "task.completed", "task_id": "task-0001", "payload": {"stat
 - events.py：EventType、TaskEvent
 
 P2/P3 已按该契约实现 FastAPI 路由；P3 增加 React 工具循环、RAG/Workspace 工具与 Token 预算降级事件。
+P4 将 /api/v1/scenarios 改为读取 scenarios.py 的场景配置，返回 strategy/tools/subtasks 明细；DAG 子任务支持声明 tools 并在执行时发出 agent.started/agent.completed 与 tool.called/tool.completed 事件。

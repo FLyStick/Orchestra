@@ -94,5 +94,25 @@ class ApiIntegrationTest(unittest.TestCase):
                 self.assertEqual(file_response.json()["path"], "answer.md")
 
 
+    def test_scenarios_endpoint_lists_p4_scenarios(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from orchestra.api import create_app
+        from orchestra.config import Settings
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = Settings(
+                db_path=str(root / "api-scenarios.db"),
+                workspace_root=str(root / "workspaces"),
+                llm_provider="mock",
+            )
+            with TestClient(create_app(settings)) as client:
+                response = client.get("/api/v1/scenarios")
+                self.assertEqual(response.status_code, 200)
+                scenario_ids = [item["scenario_id"] for item in response.json()]
+                self.assertIn("hr_policy_qa", scenario_ids)
+                self.assertIn("risk_contract_review", scenario_ids)
+
 if __name__ == "__main__":
     unittest.main()

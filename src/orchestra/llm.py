@@ -52,8 +52,8 @@ class MockLLMProvider:
     支持 delay 参数模拟网络延迟，以及 RAG 触发词模拟工具调用流程。
     """
 
-    # 演示触发词：包含该短语时，Mock 会模拟一次 React 工具调用。
-    _RAG_TRIGGER = "调用rag_search"
+    # 演示触发词：包含任一短语时，Mock 会模拟一次 React 工具调用。
+    _RAG_TRIGGERS = ("调用rag_search", "调用 rag_search", "首先调用 rag_search", "首先必须调用 rag_search")
 
     def __init__(self, delay: float = 0.0) -> None:
         """初始化 Mock Provider。
@@ -62,6 +62,16 @@ class MockLLMProvider:
             delay: 每次调用前模拟的网络延迟秒数（默认 0，即不延迟）。
         """
         self.delay = delay
+
+    @staticmethod
+    def _extract_tool_output(user_text: str) -> str:
+        """从对话历史中提取最近一次 rag_search 工具输出。"""
+        marker = "工具输出(rag_search): "
+        index = user_text.rfind(marker)
+        if index < 0:
+            return ""
+        return user_text[index + len(marker):].strip()
+
 
     async def complete(
         self,
@@ -72,21 +82,41 @@ class MockLLMProvider:
         # 可配置延迟，用于测试超时/并发场景。
         if self.delay:
             await asyncio.sleep(self.delay)
-        # 拼接所有 user 消息作为"模型输出"内容。
-        user_text = " | ".join(m.get("content", "") for m in messages if m.get("role") == "user")
-        if self._RAG_TRIGGER in user_text:
+        # 拼接 system 与 user 消息，用于识别 RAG 触发词。
+        system_text = " | ".join(
+            m.get("content", "") for m in messages if m.get("role") == "system"
+        )
+        user_text = " | ".join(
+            m.get("content", "") for m in messages if m.get("role") == "user"
+        )
+        # 场景提示词或用户显式请求中带触发词时，模拟 React 工具调用。
+        triggered = any(
+            trigger in system_text or trigger in user_text
+            for trigger in self._RAG_TRIGGERS
+        )
+        has_tool_output = "工具输出(rag_search)" in user_text
+        if triggered and not has_tool_output:
             # 第一次输出 JSON 工具调用，收到工具结果后输出最终答案。
-            if "工具输出(rag_search)" not in user_text:
+            user_trigger = next(
+                (trigger for trigger in self._RAG_TRIGGERS if trigger in user_text), None
+            )
+            if user_trigger:
                 # 提取触发词后的内容作为检索 query（截断到 20 字符）。
-                rest = user_text.split(self._RAG_TRIGGER, 1)[-1].strip(" ，。").strip()[:20]
-                # 模拟模型输出工具调用 JSON（React 循环第一步）。
-                text = json.dumps(
-                    {"tool": "rag_search", "arguments": {"query": rest or "报销标准"}},
-                    ensure_ascii=False,
-                )
+                rest = user_text.split(user_trigger, 1)[-1].strip(" ，。").strip()[:20]
             else:
-                # 消息中已包含工具输出，模拟模型基于工具结果生成最终答案。
-                text = "[Mock] 已根据 rag_search 工具结果完成回答，结论以检索到的制度文档为准。"
+                # 场景提示触发时，直接用完整用户问题作为检索 query。
+                rest = user_text.strip(" ，。").strip()[:30]
+            text = json.dumps(
+                {"tool": "rag_search", "arguments": {"query": rest or "报销标准"}},
+                ensure_ascii=False,
+            )
+        elif has_tool_output:
+            # 消息中已包含工具输出，模拟模型基于工具结果生成最终答案。
+            tool_snippet = self._extract_tool_output(user_text)[:300]
+            text = (
+                "[Mock] 已根据 rag_search 工具结果完成回答，结论以检索到的制度文档为准。\n"
+                f"检索片段：{tool_snippet}"
+            )
         else:
             # 普通场景：直接回显用户输入。
             text = f"[Mock] {user_text}"

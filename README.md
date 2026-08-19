@@ -10,7 +10,7 @@
 | P1 调研设计 | docs/ 与 src/orchestra/contracts | 已完成 |
 | P2 最小闭环 | FastAPI API + 规则路由 + Simple/DAG + SQLite + SSE | 已完成 |
 | P3 能力增强 | React 工具循环 + RAG + Workspace + Token 预算降级 | 已完成 |
-| P4 原型与验证 | 人事制度问答 + 风控条款审查 2 个业务原型及评测 | 已完成（评测数据待实测回填） |
+| P4 原型与验证 | 人事制度问答 + 风控条款审查 2 个业务原型、30 条黄金用例评测器 | 已完成（量化数据待实测回填） |
 
 ## 环境准备
 
@@ -28,7 +28,7 @@ python -m orchestra.main
 ## 目录结构
 
 ```text
-docs/                            P1-P3 设计文档与开发环境文档
+docs/                            P1-P4 设计文档与开发环境文档
 src/orchestra/
   api.py                         FastAPI 入口，REST/SSE 接口
   executor.py                    任务执行器
@@ -36,7 +36,10 @@ src/orchestra/
   store.py                       SQLite 任务/事件/Token 存储
   llm.py                         Mock 与 OpenAI 兼容 Provider
   budget.py                      Token 总预算与模型降级
-  tools.py                       RAG/Workspace 工具注册
+  tools.py                       RAG/合同/Workspace 工具注册
+  knowledge.py                   P4 演示制度与合同知识库
+  scenarios.py                   业务场景与 DAG 子任务配置
+  evals.py                       30 条黄金用例评测器
   contracts/                     核心数据契约与策略接口
   strategies/                    Simple/DAG/React 策略
   workspace/                     本地文件与内存 Workspace
@@ -58,4 +61,7 @@ tests/                           单元测试与 API 集成测试
 ```powershell
 $env:PYTHONPATH = "src"
 python -m unittest discover -s tests -v
+
+# Mock 评测（不消耗真实 Token）
+python -m orchestra.evals --provider mock
 ```

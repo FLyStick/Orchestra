@@ -93,7 +93,7 @@ class ReactStrategyTest(unittest.TestCase):
             query="回答",
             session_id="session-2",
             workspace=workspace,
-            budget=TokenBudget(total_tokens=1000, per_agent_tokens=100, allow_model_fallback=True),
+            budget=TokenBudget(total_tokens=1050, per_agent_tokens=100, allow_model_fallback=True),
             emit=lambda event_type, payload: events.append(event_type),
         )
         result = asyncio.run(strategy.execute(context))

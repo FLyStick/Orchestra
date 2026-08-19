@@ -1,47 +1,11 @@
-"""内置工具：RAG 检索、工作区读取与列表，供 React 策略调用。"""
+"""内置工具：RAG 检索、工作区读取与列表，供 React/DAG 策略调用。"""
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
-
-@dataclass(frozen=True)
-class KnowledgeDoc:
-    title: str
-    content: str
-    source: str
-
-
-# 内置演示知识库：后续可替换为真实制度文档或向量检索服务。
-SEED_KNOWLEDGE: tuple[KnowledgeDoc, ...] = (
-    KnowledgeDoc(
-        title="年假管理制度",
-        source="hr/leave-policy.md",
-        content=(
-            "公司年假制度：累计工作满 1 年享受 5 天年假，满 10 年享受 10 天，"
-            "满 20 年享受 15 天。年假申请需要通过 OA 提交，并提前 3 个工作日申请；"
-            "休半天需在申请单中选择上午或下午。"
-        ),
-    ),
-    KnowledgeDoc(
-        title="差旅报销标准",
-        source="finance/expense-policy.md",
-        content=(
-            "差旅报销标准：市内交通凭发票实报实销，住宿费按城市等级设置上限；"
-            "报销单需附带行程说明、发票与审批记录，缺一不可。"
-        ),
-    ),
-    KnowledgeDoc(
-        title="合同付款风险条款",
-        source="risk/contract-risk.md",
-        content=(
-            "合同审查重点关注付款节点、验收标准、违约金比例与争议解决条款；"
-            "若付款节点与验收条款未绑定，属于高风险情形，需法务复核。"
-        ),
-    ),
-)
-
+from .knowledge import DEMO_CONTRACTS, KNOWLEDGE_DOCS as SEED_KNOWLEDGE, KnowledgeDoc
 
 @dataclass
 class ToolResult:
@@ -114,6 +78,49 @@ class KeywordRAGTool:
             metadata={"hits": len(hits), "sources": [doc.source for doc in hits]},
         )
 
+class ContractContextTool:
+    """合同上下文工具：提取演示合同中的付款、验收、违约金与争议解决条款。"""
+
+    name = "contract_context"
+    description = "提取待审合同中的付款、验收、违约金与争议解决条款"
+    parameters: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "contract_id": {"type": "string", "description": "演示合同 ID，默认 demo"},
+            "path": {"type": "string", "description": "工作区中的合同文件相对路径（可选）"}
+        },
+        "required": [],
+    }
+
+    async def run(self, arguments: dict[str, Any], context: Any) -> ToolResult:
+        path = arguments.get("path")
+        contract_id = str(arguments.get("contract_id") or "demo")
+        if path:
+            content = await context.workspace.read(str(path))
+            if content is None:
+                return ToolResult(
+                    output=f"工作区中不存在合同文件：{path}",
+                    success=False,
+                    metadata={"path": path},
+                )
+            source = str(path)
+            contract_id = str(path).replace("/", "_").replace("\\", "_")
+        else:
+            content = DEMO_CONTRACTS.get(contract_id)
+            if not content:
+                return ToolResult(
+                    output=f"未找到演示合同：{contract_id}",
+                    success=False,
+                    metadata={"contract_id": contract_id},
+                )
+            source = f"contracts/{contract_id}.md"
+        await context.workspace.write(f"contracts/{contract_id}.md", content)
+        return ToolResult(
+            output=f"合同来源：{source}\n\n{content}",
+            success=True,
+            metadata={"contract_id": contract_id, "source": source},
+        )
+
 
 class WorkspaceReadTool:
     """读取当前会话工作区中的文件，供多 Agent 共享上下文。"""
@@ -178,6 +185,7 @@ def create_tool_registry() -> ToolRegistry:
     """创建默认工具集，包含 RAG 与工作区工具。"""
     registry = ToolRegistry()
     registry.register(KeywordRAGTool())
+    registry.register(ContractContextTool())
     registry.register(WorkspaceReadTool())
     registry.register(WorkspaceListTool())
     return registry

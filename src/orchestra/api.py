@@ -19,6 +19,7 @@ from .contracts.task import TaskInput, TokenBudget
 from .executor import Executor
 from .llm import LLMService, create_llm_provider
 from .router import RuleRouter
+from .scenarios import ALL_SCENARIOS
 from .store import SQLiteStore
 from .workspace.local_workspace import LocalWorkspace
 
@@ -257,14 +258,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"path": file_path, "content": content}
 
     @app.get("/api/v1/scenarios")
-    async def scenarios() -> list[dict[str, str]]:
-        """返回预置业务场景清单，供前端展示示例入口。"""
-        return [
-            {"department": "人事", "scenario": "制度问答", "strategy": "simple+dag"},
-            {"department": "风控", "scenario": "条款审查", "strategy": "react+dag"},
-            {"department": "财务", "scenario": "报销政策问答", "strategy": "simple+dag"},
-            {"department": "招采", "scenario": "合同条款问答", "strategy": "react+dag"},
-        ]
+    async def scenarios() -> list[dict[str, object]]:
+        """返回预置业务场景清单（含策略、工具与 DAG 子任务）。"""
+        return [scenario.to_dict() for scenario in ALL_SCENARIOS]
 
     return app
 

@@ -99,11 +99,35 @@ curl -X POST http://127.0.0.1:8000/api/v1/tasks `
 curl http://127.0.0.1:8000/api/v1/sessions/demo-react/workspace
 ```
 
+
+提交 P4 人事制度问答（自动走 React + RAG）：
+
+```powershell
+curl -X POST http://127.0.0.1:8000/api/v1/tasks `
+  -H "Content-Type: application/json" `
+  -d '{\"query\": \"公司年假制度怎么规定\", \"session_id\": \"demo-hr\", \"context\": {\"department\": \"hr\"}}'
+```
+
+提交 P4 风控条款审查（自动走 DAG 三阶段，包含合同提取与 RAG 工具调用）：
+
+```powershell
+curl -X POST http://127.0.0.1:8000/api/v1/tasks `
+  -H "Content-Type: application/json" `
+  -d '{\"query\": \"分析合同付款风险然后生成合规清单\", \"session_id\": \"demo-risk\"}'
+```
+
 ## 6. 运行测试
 
 ```powershell
 $env:PYTHONPATH = "src"
 python -m unittest discover -s tests -v
+```
+
+P4 黄金用例评测（Mock 模式不消耗真实 Token）：
+
+```powershell
+python -m orchestra.evals --provider mock
+python -m orchestra.evals --provider openai --output data/eval-report.json
 ```
 
 安装依赖后，全部测试应通过，包括 API 集成测试。未安装 FastAPI/httpx 时，API 测试会自动跳过。
@@ -114,7 +138,10 @@ python -m unittest discover -s tests -v
 - `src/orchestra/executor.py`：任务执行器，负责路由、执行、Token 记录
 - `src/orchestra/router.py`：规则路由、复杂度评分与 React 路由
 - `src/orchestra/budget.py`：Token 总预算、动态上限与模型降级
-- `src/orchestra/tools.py`：RAG 检索与 Workspace 工具注册
+- `src/orchestra/tools.py`：RAG 检索、合同提取与 Workspace 工具注册
+- `src/orchestra/knowledge.py`：P4 演示制度文档与演示合同
+- `src/orchestra/scenarios.py`：P4 业务场景与 DAG 子任务配置
+- `src/orchestra/evals.py`：30 条 HR 黄金用例评测器
 - `src/orchestra/strategies/`：Simple、DAG 与 React 策略
 - `src/orchestra/store.py`：SQLite 任务、事件与 Token 持久化
 - `src/orchestra/llm.py`：Mock 与 OpenAI 兼容 Provider

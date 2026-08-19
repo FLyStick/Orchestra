@@ -86,7 +86,7 @@ class ReactStrategy(BaseStrategy):
         if context.emit is not None:
             context.emit(event_type, payload)
 
-    def _build_prompt(self) -> str:
+    def _build_prompt(self, context: StrategyContext | None = None) -> str:
         """构造系统提示词：说明工具调用格式并列出可用工具。"""
         schema_lines: list[str] = []
         # 把每个工具的名称、描述、参数 schema 拼成一行。
@@ -95,7 +95,7 @@ class ReactStrategy(BaseStrategy):
                 f"- {schema['name']}: {schema['description']}，参数："
                 f"{json.dumps(schema['parameters'], ensure_ascii=False)}"
             )
-        return (
+        prompt = (
             "你是 Orchestra 多智能体编排框架中的 React 推理 Agent。\n"
             "需要外部信息时，只输出一个 JSON 工具调用，例如：\n"
             '{"tool": "rag_search", "arguments": {"query": "报销标准"}}\n'
@@ -103,6 +103,10 @@ class ReactStrategy(BaseStrategy):
             + "\n".join(schema_lines)
             + "\n收到工具输出后，不再调用工具，直接生成最终答案。"
         )
+        # P4 人事制度问答：强制先检索制度文档，保证回答有据可依。
+        if context and context.context.get("scenario_id") == "hr_policy_qa":
+            prompt += "\n\n当前场景为人事制度问答：必须首先调用 rag_search 检索制度文档，再基于工具结果生成答案。"
+        return prompt
 
     async def execute(self, context: StrategyContext) -> StrategyResult:
         """执行 React 循环：思考 → 工具调用 → 观察，直到产出最终答案。
@@ -117,7 +121,7 @@ class ReactStrategy(BaseStrategy):
         tracker = TokenBudgetTracker(context.budget)
         # 对话历史：系统提示 + 用户问题，后续逐步追加助手输出与工具观察。
         messages: list[dict[str, str]] = [
-            {"role": "system", "content": self._build_prompt()},
+            {"role": "system", "content": self._build_prompt(context)},
             {"role": "user", "content": context.query},
         ]
         # 所有 LLM 调用结果，用于统计 token 用量。
@@ -126,6 +130,7 @@ class ReactStrategy(BaseStrategy):
         tool_calls: list[ToolCall] = []
         # 执行轨迹摘要，写入工作区便于追溯。
         trace: list[str] = []
+        
         # React 循环：最多迭代 max_iterations 次。
         for step in range(1, context.max_iterations + 1):
             # 预算耗尽则提前终止。

@@ -20,6 +20,13 @@ from .workspace.memory import MemoryWorkspace
 
 
 class Executor:
+    """任务执行器：编排任务从提交到终态的完整生命周期。
+
+    职责：创建任务 → 路由决策 → 选择策略与工作区 → 执行策略 →
+    记录 Token 用量 → 更新状态并推送事件。所有状态变更都落库，
+    保证重启后仍可查询任务历史。
+    """
+
     def __init__(
         self,
         store: SQLiteStore,
@@ -27,43 +34,52 @@ class Executor:
         router: RuleRouter,
         workspace_root: Path,
     ) -> None:
-        self.store = store
-        self.llm_service = llm_service
-        self.router = router
-        self.workspace_root = Path(workspace_root)
+        self.store = store  # 持久化存储（任务、事件、Token 用量）。
+        self.llm_service = llm_service  # LLM 服务（含主/备模型切换）。
+        self.router = router  # 规则路由器（复杂度评分 + 策略选择）。
+        self.workspace_root = Path(workspace_root)  # 文件工作区根目录。
+        # 预创建三种策略实例，按路由结果复用，避免每次执行重复初始化。
         self._simple = SimpleStrategy(llm_service)
         self._dag = DAGStrategy(llm_service)
         self._react = ReactStrategy(llm_service)
+        # 后台任务集合：持有引用防止被 GC，完成后自动移除。
         self._tasks: set[asyncio.Task[Any]] = set()
+        # 取消标记集合：记录被取消的任务 ID，供执行中检查。
         self._cancel_flags: set[str] = set()
 
     # 创建任务后立即返回；实际执行放在事件循环的后台任务中。
     def submit(self, task_input: TaskInput) -> str:
+        """提交任务：落库 + 发创建事件，然后异步执行，立即返回 task_id。"""
         task_id = self.store.create_task(task_input)
         self.store.append_event(
             task_id,
             EventType.TASK_CREATED.value,
             {
                 "session_id": task_input.session_id,
-                "query_preview": task_input.query[:100],
+                "query_preview": task_input.query[:100],  # 只存前 100 字符预览。
             },
         )
         loop = asyncio.get_running_loop()
         background = loop.create_task(self.run(task_id))
         self._tasks.add(background)
-        background.add_done_callback(self._tasks.discard)
+        background.add_done_callback(self._tasks.discard)  # 完成后从集合移除。
         return task_id
 
     async def execute_sync(self, task_input: TaskInput) -> dict[str, Any]:
+        """同步执行入口：直接等待任务完成（供测试或内部调用）。"""
         task_id = self.store.create_task(task_input)
         return await self.run(task_id)
 
     async def run(self, task_id: str) -> dict[str, Any]:
-        started = time.monotonic()
+        """执行任务主流程：路由 → 执行 → 落库 → 发事件。
+
+        返回任务的最新记录（含状态、结果、错误等）。
+        """
+        started = time.monotonic()  # 记录开始时间，用于计算耗时。
         task = self.store.get_task(task_id)
         if task is None:
             return {}
-        task_input = self._restore_input(task)
+        task_input = self._restore_input(task)  # 从存储记录还原输入契约。
         self.store.update_task(task_id, status=TaskStatus.ROUTING)
 
         try:
@@ -75,6 +91,7 @@ class Executor:
             self.store.append_event(task_id, EventType.TASK_FAILED.value, {"error": str(exc)})
             return self.store.get_task(task_id) or {}
 
+        # 路由完成后若已被取消，直接返回当前状态，不再继续执行。
         if self._is_cancelled(task_id):
             return self.store.get_task(task_id) or {}
 
@@ -100,17 +117,23 @@ class Executor:
         def emit(event_type: str, payload: dict[str, Any]) -> None:
             self.store.append_event(task_id, event_type, payload)
 
+        # 合并路由决策附加的上下文（如场景 ID），供策略层使用。
+        task_context = dict(task_input.context)
+        if decision.scenario_id:
+            task_context["scenario_id"] = decision.scenario_id
+
         context = StrategyContext(
             task_id=task_id,
             query=task_input.query,
             session_id=task_input.session_id,
             workspace=workspace,
             budget=task_input.budget,
-            context=task_input.context,
+            context=task_context,
             max_iterations=task_input.max_iterations,
             subtasks=decision.subtasks,
             emit=emit,
         )
+        # 按路由结果选择对应策略实例。
         if decision.strategy == StrategyType.SIMPLE:
             strategy = self._simple
         elif decision.strategy == StrategyType.DAG:
@@ -130,10 +153,12 @@ class Executor:
             # 策略执行过程统一落库与发事件，避免执行黑盒。
             result = await strategy.execute(context)
         except Exception as exc:
+            # 执行异常：落 FAILED 并记录错误信息。
             duration_ms = int((time.monotonic() - started) * 1000)
             self.store.update_task(task_id, status=TaskStatus.FAILED, error=str(exc), duration_ms=duration_ms)
             self.store.append_event(task_id, EventType.TASK_FAILED.value, {"error": str(exc)})
         else:
+            # 执行成功：记录 Token 用量、更新状态为 SUCCEEDED 并推送完成事件。
             duration_ms = int((time.monotonic() - started) * 1000)
             token_usage = result.token_usage
             self.store.record_token_usage(
@@ -161,15 +186,17 @@ class Executor:
 
     # 取消仅对未终止任务生效；执行器在状态迁移前检查取消标记。
     def cancel(self, task_id: str) -> bool:
+        """取消任务：仅对未终止任务生效，返回是否成功取消。"""
         task = self.store.get_task(task_id)
         if not task or self.store.is_terminal(task["status"]):
-            return False
+            return False  # 任务不存在或已到终态，无法取消。
         self._cancel_flags.add(task_id)
         self.store.update_task(task_id, status=TaskStatus.CANCELLED)
         self.store.append_event(task_id, EventType.TASK_CANCELLED.value, {})
         return True
 
     def _restore_input(self, task: dict[str, Any]) -> TaskInput:
+        """从存储记录还原 TaskInput 契约（预算等嵌套对象需重建）。"""
         budget = None
         if task.get("budget"):
             budget = TokenBudget(**task["budget"])
@@ -186,4 +213,5 @@ class Executor:
         )
 
     def _is_cancelled(self, task_id: str) -> bool:
+        """检查任务是否已被取消。"""
         return task_id in self._cancel_flags

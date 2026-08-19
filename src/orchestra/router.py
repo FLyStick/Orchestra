@@ -1,9 +1,8 @@
 """规则路由：复杂度评分、策略选择与子任务拆解。
 
-本模块是编排框架的"路由层"：根据用户请求的文本特征（长度、连接词、
-步骤性词汇、工具类词汇）计算一个复杂度分数，再依据分数决定采用
-简单策略（SIMPLE）、DAG 策略还是 React 工具循环策略，并在 DAG 策略下
-把请求拆成多个子任务。
+本模块是编排框架的"路由层"：先命中 P4 预置业务场景，再根据用户请求的
+文本特征（长度、连接词、步骤性词汇、工具类词汇）计算一个复杂度分数，
+并依据分数决定采用 Simple 策略、DAG 策略还是 React 工具循环策略。
 """
 from __future__ import annotations
 
@@ -12,6 +11,7 @@ import re
 from .contracts.routing import RoutingDecision, SubtaskSpec
 from .contracts.strategies import StrategyType
 from .contracts.task import TaskInput
+from .scenarios import select_scenario
 
 # 复杂度阈值：分数 >= 该值时走 DAG 策略，否则走 SIMPLE 策略。
 SIMPLE_THRESHOLD = 0.3
@@ -112,7 +112,7 @@ def build_subtasks(query: str) -> list[SubtaskSpec]:
 
 
 class RuleRouter:
-    """规则路由器：根据复杂度分数决定执行策略并生成子任务。"""
+    """规则路由器：先匹配业务场景，再按复杂度决定执行策略并生成子任务。"""
 
     def __init__(self, threshold: float = SIMPLE_THRESHOLD, scorer: ComplexityScorer | None = None) -> None:
         """初始化路由器。
@@ -140,14 +140,27 @@ class RuleRouter:
         score = self.scorer.score(task.query, task.context)
         # 未拆分任务时保持空元组，避免后续分支引用未绑定变量。
         subtasks: tuple[SubtaskSpec, ...] = ()
+        # 命中 P4 业务场景时，场景自带策略、工具与子任务定义。
+        scenario = select_scenario(task)
         # 调用方未显式指定策略时，按复杂度阈值与 React 标记自动路由。
+
+        #调用方显示指定策略
         if task.strategy:
-            # 显式策略：把字符串转成枚举，非法值抛错。
             try:
                 strategy = StrategyType(task.strategy.lower())
             except ValueError as exc:
                 raise ValueError(f"unsupported strategy: {task.strategy}") from exc
+            # 显式 DAG 且命中场景时，复用场景预置的子任务（含工具与依赖）。
+            if strategy == StrategyType.DAG and scenario:
+                subtasks = scenario.subtasks
             reason = f"explicit strategy: {strategy.value}"
+        #没有策略但是存在特定场景，走预定业务场景
+        elif scenario:
+            # P4 业务场景优先于通用复杂度规则，保证演示原型可复现。
+            strategy = scenario.strategy
+            subtasks = scenario.subtasks
+            reason = f"scenario_match={scenario.scenario_id}"
+        
         elif any(marker in task.query for marker in REACT_MARKERS):
             # 需要检索、审查或调用工具的请求优先走 React 工具循环。
             strategy = StrategyType.REACT
@@ -169,4 +182,5 @@ class RuleRouter:
             reason=reason,
             budget=task.budget,
             subtasks=subtasks,
+            scenario_id=scenario.scenario_id if scenario else None,
         )

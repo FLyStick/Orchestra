@@ -1,4 +1,7 @@
-"""SQLite 持久化：任务、事件与 Token 用量。"""
+"""
+SQLite 持久化：任务、事件与 Token 用量。
+提供任务记录、事件流（供 SSE 增量拉取）与 Token 用量统计的存储能力。
+"""
 from __future__ import annotations
 
 import json
@@ -11,23 +14,30 @@ from typing import Any
 
 from .contracts.task import TaskInput, TaskStatus
 
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 # P2 先用 SQLite 与进程内锁完成轻量持久化，后续可替换为 Postgres/Temporal。
 class SQLiteStore:
+    """SQLite 存储层：任务、事件与 Token 用量的读写入口。
+
+    线程安全：所有数据库操作通过 RLock 串行化；
+    check_same_thread=False 允许在 asyncio 后台线程中访问同一连接。
+    """
+
     def __init__(self, db_path: Path) -> None:
         self.path = db_path
+        # 确保数据库所在目录存在（当前目录除外）。
         if self.path.parent != Path("."):
             self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.RLock()
+        self._lock = threading.RLock()  # 进程内锁，串行化所有写操作。
         self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
+        self._conn.row_factory = sqlite3.Row  # 行按列名访问。
         self._init_schema()
 
     def _init_schema(self) -> None:
+        """建表与索引：任务、事件、Token 用量三张核心表。"""
         with self._lock:
             # 三张核心表：任务、事件、Token 用量；索引按 task_id 查询优化。
             self._conn.executescript(
@@ -74,6 +84,7 @@ class SQLiteStore:
 
     # 落库即提交任务，后续执行通过 task_id 恢复上下文。
     def create_task(self, task: TaskInput, task_id: str | None = None) -> str:
+        """创建任务记录，初始状态为 PENDING，返回 task_id。"""
         task_id = task_id or uuid.uuid4().hex
         now = _now()
         with self._lock:
@@ -96,6 +107,7 @@ class SQLiteStore:
                     None,
                     None,
                     None,
+                    # 预算对象序列化为 JSON 存储，读取时再还原。
                     json.dumps(
                         {
                             "total_tokens": task.budget.total_tokens,
@@ -116,6 +128,7 @@ class SQLiteStore:
         return task_id
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:
+        """按 task_id 查询任务，附带汇总的 Token 用量；不存在返回 None。"""
         with self._lock:
             row = self._conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
         if row is None:
@@ -123,6 +136,7 @@ class SQLiteStore:
         return self._row_to_task(row)
 
     def _row_to_task(self, row: sqlite3.Row) -> dict[str, Any]:
+        """将数据库行转换为字典：JSON 字段反序列化，并附带 Token 用量汇总。"""
         task = {
             "task_id": row["task_id"],
             "query": row["query"],
@@ -155,6 +169,7 @@ class SQLiteStore:
         error: str | None = None,
         duration_ms: int | None = None,
     ) -> None:
+        """更新任务状态与结果；strategy/duration_ms 用 COALESCE 保留旧值。"""
         now = _now()
         with self._lock:
             self._conn.execute(
@@ -183,6 +198,7 @@ class SQLiteStore:
         event_type: str,
         payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """追加一条事件记录，返回含自增 id 的事件字典（供 SSE 使用）。"""
         now = _now()
         with self._lock:
             cursor = self._conn.execute(
@@ -194,6 +210,7 @@ class SQLiteStore:
         return {"id": event_id, "task_id": task_id, "event_type": event_type, "payload": payload or {}, "occurred_at": now}
 
     def list_events(self, task_id: str, after_id: int = 0) -> list[dict[str, Any]]:
+        """按自增 id 增量拉取事件（after_id 之后），供 SSE 轮询使用。"""
         with self._lock:
             rows = self._conn.execute(
                 "SELECT id, task_id, event_type, payload_json, occurred_at FROM task_events WHERE task_id = ? AND id > ? ORDER BY id",
@@ -218,6 +235,7 @@ class SQLiteStore:
         output_tokens: int,
         model: str,
     ) -> None:
+        """记录一次 LLM 调用的 Token 用量（按 agent 维度）。"""
         with self._lock:
             self._conn.execute(
                 "INSERT INTO token_usage (task_id, agent_id, input_tokens, output_tokens, model, created_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -226,6 +244,7 @@ class SQLiteStore:
             self._conn.commit()
 
     def get_token_usage(self, task_id: str) -> list[dict[str, Any]]:
+        """查询任务的全部 Token 用量明细（按记录顺序）。"""
         with self._lock:
             rows = self._conn.execute(
                 "SELECT agent_id, input_tokens, output_tokens, model FROM token_usage WHERE task_id = ? ORDER BY id",
@@ -235,6 +254,7 @@ class SQLiteStore:
 
     # 汇总 Token 用量，供任务结果与成本统计使用。
     def aggregate_token_usage(self, task_id: str) -> dict[str, int]:
+        """汇总任务的 Token 用量：输入/输出总量与调用次数。"""
         usage = self.get_token_usage(task_id)
         return {
             "input_tokens": sum(row["input_tokens"] for row in usage),
@@ -243,9 +263,11 @@ class SQLiteStore:
         }
 
     def close(self) -> None:
+        """关闭数据库连接（应用退出时调用）。"""
         with self._lock:
             self._conn.close()
 
     @staticmethod
     def is_terminal(status: str) -> bool:
+        """判断状态是否为终态（succeeded/failed/cancelled）。"""
         return status in {TaskStatus.SUCCEEDED.value, TaskStatus.FAILED.value, TaskStatus.CANCELLED.value}

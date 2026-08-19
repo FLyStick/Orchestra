@@ -10,7 +10,7 @@ class RouterTest(unittest.TestCase):
         self.router = RuleRouter()
 
     def test_simple_query_routes_to_simple(self) -> None:
-        decision = self.router.route(TaskInput(query="公司年假几天", session_id="s1"))
+        decision = self.router.route(TaskInput(query="报销标准是什么", session_id="s1"))
         self.assertEqual(decision.strategy, StrategyType.SIMPLE)
         self.assertLess(decision.complexity_score, 0.3)
 

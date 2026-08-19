@@ -18,3 +18,4 @@ class RoutingDecision:
     reason: str = ""
     budget: TokenBudget | None = None
     subtasks: tuple[SubtaskSpec, ...] = ()
+    scenario_id: str | None = None  # 命中的 P4 业务场景标识，用于执行上下文增强
