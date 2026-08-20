@@ -12,6 +12,7 @@
 | P3 能力增强 | React 工具循环 + RAG + Workspace + Token 预算降级 | 已完成 |
 | P4 原型与验证 | 人事制度问答 + 风控条款审查 2 个业务原型、30 条黄金用例评测器 | 已完成（量化数据待实测回填） |
 | P4.5 组合编排 | DAG + React 正交化、节点级策略、Simple+RAG/React 路由 | 已完成 |
+| 第二阶段规划 | 路由评测底座、真实 RAG、Redis Streams 工作流 | 规划完成（待实施） |
 
 ## 环境准备
 
@@ -57,6 +58,7 @@ tests/                           单元测试与 API 集成测试
 - docs/05-business-scenarios.md  业务场景清单与验收口径
 - docs/06-development-environment.md  开发环境与部署文档
 - docs/07-dag-react-composition.md  DAG + React 组合编排设计（已实施）
+- docs/08-phase2-plan.md  第二阶段实施规划（待实施）
 
 ## 开发验证
 
