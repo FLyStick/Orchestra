@@ -8,19 +8,22 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, AsyncGenerator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .config import Settings, get_settings
 from .contracts.task import TaskInput, TokenBudget
+from .rag.service import create_rag_stack
 from .executor import Executor
 from .llm import LLMService, create_llm_provider
 from .router import RuleRouter
 from .scenarios import ALL_SCENARIOS
 from .store import SQLiteStore
+from .tools import create_tool_registry
 from .workspace.local_workspace import LocalWorkspace
 
 
@@ -44,6 +47,16 @@ class CreateTaskRequest(BaseModel):
     max_iterations: int = Field(default=10, ge=1, le=100)  # 最大迭代次数（预留）。
     workspace_enabled: bool = True  # 是否启用文件工作区。
     metadata: dict[str, Any] = Field(default_factory=dict)  # 附加元数据。
+
+
+
+class KnowledgeSearchRequest(BaseModel):
+    """包 2 知识检索请求：query 必填，department/mode 可选。"""
+
+    query: str = Field(min_length=1)
+    department: str | None = None
+    top_k: int = Field(default=5, ge=1, le=20)
+    mode: str | None = None
 
 
 # 将 HTTP 请求模型转换为核心契约 TaskInput。
@@ -114,12 +127,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     llm_service = LLMService(provider, settings.llm_model, settings.fallback_model)
     # 路由：规则路由（复杂度评分 + 策略选择）。
     router = RuleRouter()
+    # 包 2：按配置创建真实 RAG 服务；未启用时保留 Mock 关键词兜底。
+    retrieval_service, ingestion_service = create_rag_stack(settings)
+    tool_registry = create_tool_registry(retrieval_service=retrieval_service)
     # 执行器：后台执行任务，串联路由、策略与存储。
     executor = Executor(
         store=store,
         llm_service=llm_service,
         router=router,
         workspace_root=settings.workspace_dir,
+        tool_registry=tool_registry,
     )
 
     @asynccontextmanager
@@ -132,6 +149,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # 把组件挂到 app.state，便于测试与中间件访问。
     app.state.store = store
     app.state.executor = executor
+    app.state.retrieval_service = retrieval_service
+    app.state.ingestion_service = ingestion_service
 
     @app.get("/")
     async def root() -> dict[str, str]:
@@ -256,6 +275,68 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if content is None:
             raise HTTPException(status_code=404, detail="workspace file not found")
         return {"path": file_path, "content": content}
+
+    @app.post("/api/v2/documents", status_code=201)
+    async def upload_document(
+        file: UploadFile = File(...),
+        department: str = Form(...),
+        title: str | None = Form(None),
+    ) -> dict[str, Any]:
+        """上传单个知识文档到指定部门并建立向量索引。"""
+        if ingestion_service is None:
+            raise HTTPException(status_code=503, detail="RAG 未启用，请检查 .env 的 Embedding/ChromaDB 配置")
+        from .rag.departments import normalize_department
+
+        normalized = normalize_department(department)
+        filename = Path(file.filename or "document.txt").name
+        target = settings.knowledge_dir / normalized / filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(await file.read())
+        record = await ingestion_service.index_file(target, department=normalized, title=title)
+        return record.to_dict()
+
+    @app.get("/api/v2/documents")
+    async def list_documents(department: str | None = None) -> list[dict[str, Any]]:
+        """列出已索引知识文档，可按部门筛选。"""
+        if ingestion_service is None:
+            raise HTTPException(status_code=503, detail="RAG 未启用，请检查 .env 的 Embedding/ChromaDB 配置")
+        return ingestion_service.list_documents(department)
+
+    @app.post("/api/v2/documents/ingest", status_code=202)
+    async def ingest_knowledge_directory(department: str | None = None) -> dict[str, Any]:
+        """扫描 data/knowledge/{department} 目录并增量索引全部支持文件。"""
+        if ingestion_service is None:
+            raise HTTPException(status_code=503, detail="RAG 未启用，请检查 .env 的 Embedding/ChromaDB 配置")
+        records, errors = await ingestion_service.index_directory(department)
+        return {
+            "records": [record.to_dict() for record in records],
+            "errors": errors,
+        }
+
+    @app.delete("/api/v2/documents/{document_id}")
+    async def delete_document(document_id: str) -> dict[str, str]:
+        """删除文档清单与对应向量块。"""
+        if ingestion_service is None:
+            raise HTTPException(status_code=503, detail="RAG 未启用，请检查 .env 的 Embedding/ChromaDB 配置")
+        if not ingestion_service.delete(document_id):
+            raise HTTPException(status_code=404, detail="document not found")
+        return {"document_id": document_id, "status": "deleted"}
+
+    @app.post("/api/v2/knowledge/search")
+    async def search_knowledge(payload: KnowledgeSearchRequest) -> dict[str, Any]:
+        """执行包 2 混合检索，返回命中的知识块、来源与置信度。"""
+        if retrieval_service is None:
+            raise HTTPException(status_code=503, detail="RAG 未启用，请检查 .env 的 Embedding/ChromaDB 配置")
+        try:
+            result = await retrieval_service.search(
+                payload.query,
+                department=payload.department,
+                top_k=payload.top_k,
+                mode=payload.mode,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"检索失败：{exc}")
+        return result.to_dict()
 
     @app.get("/api/v1/scenarios")
     async def scenarios() -> list[dict[str, object]]:

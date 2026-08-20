@@ -12,6 +12,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    """解析 true/false/1/0 等常见布尔写法。"""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 # 配置类为不可变对象，避免运行期被意外修改。
 @dataclass(frozen=True)
 class Settings:
@@ -28,6 +36,29 @@ class Settings:
     routing_golden_path: str = field(default_factory=lambda: os.getenv("ORCHESTRA_ROUTING_GOLDEN_PATH", "docs/golden/routing-cases.json"))
     routing_ambiguous_band: str = field(default_factory=lambda: os.getenv("ORCHESTRA_ROUTING_AMBIGUOUS_BAND", "0.25,0.35"))
     hr_scenario_threshold: float = field(default_factory=lambda: float(os.getenv("ORCHESTRA_HR_SCENARIO_THRESHOLD", "0.30")))
+    # 包 2：RAG 总开关与 Embedding / ChromaDB / Rerank 配置。
+    rag_enabled: bool = field(default_factory=lambda: _env_bool("ORCHESTRA_RAG_ENABLED", False))
+    embedding_provider: str = field(default_factory=lambda: os.getenv("ORCHESTRA_EMBEDDING_PROVIDER", "openai"))
+    embedding_model: str = field(default_factory=lambda: os.getenv("ORCHESTRA_EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5"))
+    embedding_dim: str = field(default_factory=lambda: os.getenv("ORCHESTRA_EMBEDDING_DIM", "0"))
+    embedding_api_key: str = field(default_factory=lambda: os.getenv("ORCHESTRA_EMBEDDING_API_KEY", ""))
+    embedding_base_url: str = field(default_factory=lambda: os.getenv("ORCHESTRA_EMBEDDING_BASE_URL", "https://api.openai.com/v1"))
+    chroma_path: str = field(default_factory=lambda: os.getenv("ORCHESTRA_CHROMA_PATH", "data/chroma"))
+    chroma_host: str = field(default_factory=lambda: os.getenv("ORCHESTRA_CHROMA_HOST", ""))
+    chroma_port: int = field(default_factory=lambda: int(os.getenv("ORCHESTRA_CHROMA_PORT", "8001")))
+    collection_prefix: str = field(default_factory=lambda: os.getenv("ORCHESTRA_COLLECTION_PREFIX", "orchestra"))
+    knowledge_source_dir: str = field(default_factory=lambda: os.getenv("ORCHESTRA_KNOWLEDGE_SOURCE_DIR", "data/knowledge"))
+    retrieval_top_k: int = field(default_factory=lambda: int(os.getenv("ORCHESTRA_RETRIEVAL_TOP_K", "5")))
+    retrieval_mode: str = field(default_factory=lambda: os.getenv("ORCHESTRA_RETRIEVAL_MODE", "hybrid"))
+    retrieval_min_score: float = field(default_factory=lambda: float(os.getenv("ORCHESTRA_RETRIEVAL_MIN_SCORE", "0.0")))
+    rerank_enabled: bool = field(default_factory=lambda: _env_bool("ORCHESTRA_RERANK_ENABLED", False))
+    rerank_model: str = field(default_factory=lambda: os.getenv("ORCHESTRA_RERANK_MODEL", "gte-rerank-v2"))
+    rerank_api_key: str = field(default_factory=lambda: os.getenv("ORCHESTRA_RERANK_API_KEY", ""))
+    rerank_base_url: str = field(default_factory=lambda: os.getenv("ORCHESTRA_RERANK_BASE_URL", ""))
+    rerank_top_n: int = field(default_factory=lambda: int(os.getenv("ORCHESTRA_RERANK_TOP_N", "5")))
+    rag_chunk_size: int = field(default_factory=lambda: int(os.getenv("ORCHESTRA_RAG_CHUNK_SIZE", "512")))
+    rag_chunk_overlap: int = field(default_factory=lambda: int(os.getenv("ORCHESTRA_RAG_CHUNK_OVERLAP", "64")))
+    rag_manifest_path: str = field(default_factory=lambda: os.getenv("ORCHESTRA_RAG_MANIFEST_PATH", "data/rag_manifest.json"))
 
     @property
     def db_file(self) -> Path:
@@ -49,6 +80,29 @@ class Settings:
         low = float(parts[0])
         high = float(parts[1]) if len(parts) > 1 else 0.35
         return low, high
+
+    @property
+    def chroma_dir(self) -> Path:
+        """ChromaDB 本地持久化目录。"""
+        return Path(self.chroma_path).expanduser()
+
+    @property
+    def knowledge_dir(self) -> Path:
+        """部门知识文档根目录。"""
+        return Path(self.knowledge_source_dir).expanduser()
+
+    @property
+    def rag_manifest_file(self) -> Path:
+        """文档索引清单文件路径。"""
+        return Path(self.rag_manifest_path).expanduser()
+
+    @property
+    def embedding_vector_dim(self) -> int | None:
+        """Embedding 向量维度；未配置或为 0 时由服务自动识别。"""
+        raw = (self.embedding_dim or "").strip()
+        if not raw or raw == "0":
+            return None
+        return int(raw)
 
 
 # 每次调用返回新实例，测试之间不会共享状态。

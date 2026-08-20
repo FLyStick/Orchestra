@@ -35,6 +35,7 @@ class ApiIntegrationTest(unittest.TestCase):
                 db_path=str(root / "api.db"),
                 workspace_root=str(root / "workspaces"),
                 llm_provider="mock",
+                rag_enabled=False,
             )
             with TestClient(create_app(settings)) as client:
                 response = client.get("/healthz")
@@ -66,6 +67,7 @@ class ApiIntegrationTest(unittest.TestCase):
                 db_path=str(root / "api-react.db"),
                 workspace_root=str(root / "workspaces"),
                 llm_provider="mock",
+                rag_enabled=False,
             )
             with TestClient(create_app(settings)) as client:
                 response = client.post(
@@ -94,6 +96,38 @@ class ApiIntegrationTest(unittest.TestCase):
                 self.assertEqual(file_response.json()["path"], "answer.md")
 
 
+    def test_rag_api_gracefully_disabled_without_config(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from orchestra.api import create_app
+        from orchestra.config import Settings
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = Settings(
+                db_path=str(root / "api-rag-off.db"),
+                workspace_root=str(root / "workspaces"),
+                llm_provider="mock",
+                rag_enabled=False,
+            )
+            with TestClient(create_app(settings)) as client:
+                self.assertEqual(client.get("/api/v2/documents").status_code, 503)
+                self.assertEqual(
+                    client.post(
+                        "/api/v2/documents",
+                        files={"file": ("a.txt", b"abc")},
+                        data={"department": "hr"},
+                    ).status_code,
+                    503,
+                )
+                self.assertEqual(
+                    client.post(
+                        "/api/v2/knowledge/search",
+                        json={"query": "年假"},
+                    ).status_code,
+                    503,
+                )
+
     def test_scenarios_endpoint_lists_p4_scenarios(self) -> None:
         from fastapi.testclient import TestClient
 
@@ -106,6 +140,7 @@ class ApiIntegrationTest(unittest.TestCase):
                 db_path=str(root / "api-scenarios.db"),
                 workspace_root=str(root / "workspaces"),
                 llm_provider="mock",
+                rag_enabled=False,
             )
             with TestClient(create_app(settings)) as client:
                 response = client.get("/api/v1/scenarios")

@@ -13,6 +13,7 @@
 | P4 原型与验证 | 人事制度问答 + 风控条款审查 2 个业务原型、30 条黄金用例评测器 | 已完成（量化数据待实测回填） |
 | P4.5 组合编排 | DAG + React 正交化、节点级策略、Simple+RAG/React 路由 | 已完成 |
 | 第二阶段·包 1 | 路由评测底座、可解释评分、拆解计划校验 | 已实现（路由评测 89/89） |
+| 第二阶段·包 2 | 真实 RAG 落地：文档导入、ChromaDB、混合检索/Rerank、RAG CLI/API | 已实现（真实链路已跑通） |
 
 ## 环境准备
 
@@ -31,6 +32,7 @@ python -m orchestra.main
 
 ```text
 docs/                            P1-P4 设计文档与开发环境文档
+docker/                         Redis / ChromaDB Docker 编排与手动部署文档
 src/orchestra/
   api.py                         FastAPI 入口，REST/SSE 接口
   executor.py                    任务执行器
@@ -40,6 +42,8 @@ src/orchestra/
   llm.py                         Mock 与 OpenAI 兼容 Provider
   budget.py                      Token 总预算与模型降级
   tools.py                       RAG/合同/Workspace 工具注册
+  rag_cli.py                     RAG 导入/检索/管理 CLI
+  rag/                           RAG 解析、Embedding、ChromaDB、检索服务
   knowledge.py                   P4 演示制度与合同知识库
   scenarios.py                   业务场景与 DAG 子任务配置
   evals.py                       P4 黄金用例 + 路由/拆解评测
@@ -59,7 +63,9 @@ tests/                           单元测试与 API 集成测试
 - docs/05-business-scenarios.md  业务场景清单与验收口径
 - docs/06-development-environment.md  开发环境与部署文档
 - docs/07-dag-react-composition.md  DAG + React 组合编排设计（已实施）
-- docs/08-phase2-plan.md  第二阶段实施规划（包 1 已实现）
+- docs/08-phase2-plan.md  第二阶段实施规划（包 1/2 已实现）
+- docs/09-package2-report.md  包 2 实施报告
+- docker/README.md  Redis / ChromaDB Docker 手动部署
 
 ## 开发验证
 

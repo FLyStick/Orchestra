@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, TYPE_CHECKING, Protocol, runtime_checkable
 
 from .knowledge import DEMO_CONTRACTS, KNOWLEDGE_DOCS as SEED_KNOWLEDGE, KnowledgeDoc
+
+if TYPE_CHECKING:
+    from .rag.retrieval import RetrievalService
 
 @dataclass
 class ToolResult:
@@ -158,6 +161,87 @@ class WorkspaceListTool:
         return ToolResult(output=output, success=True, metadata={"files": files})
 
 
+# 业务场景对应的部门标识，供 RAG 工具自动限定检索范围。
+_SCENARIO_DEPARTMENT = {
+    "hr_policy_qa": "hr",
+    "risk_contract_review": "risk",
+    "finance_policy_qa": "finance",
+    "finance_invoice_review": "finance",
+    "procurement_process_qa": "procurement",
+}
+
+
+class RetrievalRAGTool:
+    """真实 RAG 工具：通过 RetrievalService 执行向量/关键词混合检索。"""
+
+    name = "rag_search"
+    description = "在内部制度与向量知识库中检索与问题相关的文档片段"
+    parameters: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "需要检索的问题或关键词"},
+            "department": {"type": "string", "description": "限定部门，可选：hr/risk/finance/procurement"},
+            "top_k": {"type": "integer", "description": "返回条数，可选"},
+        },
+        "required": ["query"],
+    }
+
+    def __init__(self, retrieval_service: "RetrievalService") -> None:
+        self._retrieval = retrieval_service
+
+    async def run(self, arguments: dict[str, Any], context: Any) -> ToolResult:
+        query = str(arguments.get("query") or "")
+        if not query.strip():
+            return ToolResult(output="检索 query 不能为空", success=False, metadata={})
+        department = arguments.get("department") or context.context.get("department")
+        if not department:
+            department = _SCENARIO_DEPARTMENT.get(context.context.get("scenario_id"))
+        try:
+            top_k = int(arguments.get("top_k") or 0) or None
+            result = await self._retrieval.search(query, department=department, top_k=top_k)
+        except Exception as exc:
+            return ToolResult(
+                output=f"检索服务执行异常：{exc}",
+                success=False,
+                metadata={"query": query, "error": str(exc)},
+            )
+        if not result.hits:
+            return ToolResult(
+                output="未检索到可依据的制度/规则文档。",
+                success=False,
+                metadata={
+                    "query": query,
+                    "hits": 0,
+                    "mode": result.mode,
+                    "reranked": result.reranked,
+                    "confidence": result.confidence,
+                },
+            )
+        parts: list[str] = []
+        sources: list[str] = []
+        for hit in result.hits:
+            chunk = hit.chunk
+            parts.append(
+                f"标题：{chunk.title}\n"
+                f"来源：{chunk.source}\n"
+                f"相似度：{hit.score:.4f}\n"
+                f"内容：{chunk.content[:300]}"
+            )
+            sources.append(chunk.source)
+            await context.workspace.write(f"rag/{chunk.source}", chunk.content)
+        return ToolResult(
+            output="\n\n".join(parts),
+            success=True,
+            metadata={
+                "hits": len(result.hits),
+                "sources": sources,
+                "mode": result.mode,
+                "reranked": result.reranked,
+                "confidence": result.confidence,
+            },
+        )
+
+
 class ToolRegistry:
     """工具注册表：按名称查找工具，并向 LLM 输出工具模式。"""
 
@@ -181,10 +265,19 @@ class ToolRegistry:
         ]
 
 
-def create_tool_registry() -> ToolRegistry:
-    """创建默认工具集，包含 RAG 与工作区工具。"""
+def create_tool_registry(
+    retrieval_service: "RetrievalService | None" = None,
+) -> ToolRegistry:
+    """创建默认工具集，包含 RAG 与工作区工具。
+
+    Args:
+        retrieval_service: 包 2 RetrievalService；未启用时使用内置关键词兜底。
+    """
     registry = ToolRegistry()
-    registry.register(KeywordRAGTool())
+    if retrieval_service is not None:
+        registry.register(RetrievalRAGTool(retrieval_service))
+    else:
+        registry.register(KeywordRAGTool())
     registry.register(ContractContextTool())
     registry.register(WorkspaceReadTool())
     registry.register(WorkspaceListTool())

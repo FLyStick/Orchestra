@@ -5,6 +5,7 @@
 - Python 3.11+
 - Conda 环境：`orchestra`（已创建：`C:\Users\20235\.conda\envs\orchestra`）
 - 默认使用 Mock LLM，无需 API Key 即可本地运行
+- Redis / ChromaDB 的 Docker 编排位于 `docker/`，手动部署见 [../docker/README.md](../docker/README.md)；包 2 需要 ChromaDB（Docker Server 或本地模式），包 3 需要 Redis
 
 ## 2. 激活环境并安装依赖
 
@@ -53,6 +54,20 @@ python -m orchestra.main
 | ORCHESTRA_WORKSPACE_ROOT | data/workspaces | Workspace 根目录 |
 | ORCHESTRA_HOST | 127.0.0.1 | 监听地址 |
 | ORCHESTRA_PORT | 8000 | 监听端口 |
+| ORCHESTRA_RAG_ENABLED | false | 包 2 RAG 总开关 |
+| ORCHESTRA_EMBEDDING_PROVIDER | openai | openai 兼容或 local |
+| ORCHESTRA_EMBEDDING_MODEL | qwen3.7-text-embedding | Embedding 模型 |
+| ORCHESTRA_EMBEDDING_BASE_URL | https://dashscope.aliyuncs.com/compatible-mode/v1 | Embedding API 地址 |
+| ORCHESTRA_EMBEDDING_API_KEY | 空 | Embedding API Key |
+| ORCHESTRA_CHROMA_PATH | data/chroma | 本地持久化目录 |
+| ORCHESTRA_CHROMA_HOST | 127.0.0.1 | ChromaDB Server 地址；本地模式留空 |
+| ORCHESTRA_CHROMA_PORT | 8001 | ChromaDB 端口 |
+| ORCHESTRA_RERANK_ENABLED | false | 是否启用 Rerank |
+| ORCHESTRA_RERANK_MODEL | gte-rerank-v2 | Rerank 模型 |
+| ORCHESTRA_RERANK_BASE_URL | 空 | MaaS Rerank 服务地址 |
+| ORCHESTRA_RERANK_API_KEY | 空 | Rerank API Key |
+| ORCHESTRA_RETRIEVAL_MODE | hybrid | hybrid/vector/keyword |
+| ORCHESTRA_RETRIEVAL_TOP_K | 5 | 返回命中条数 |
 
 Windows PowerShell 示例：
 
@@ -114,6 +129,15 @@ curl -X POST http://127.0.0.1:8000/api/v1/tasks `
 curl -X POST http://127.0.0.1:8000/api/v1/tasks `
   -H "Content-Type: application/json" `
   -d '{\"query\": \"分析合同付款风险然后生成合规清单\", \"session_id\": \"demo-risk\"}'
+```
+
+### 5.1 包 2 RAG 快速验证（需 ChromaDB 与 API Key）
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m orchestra.rag_cli seed
+python -m orchestra.rag_cli search --query "公司年假有几天" --department hr --top-k 5 --mode hybrid
+python -m orchestra.rag_cli list --department hr
 ```
 
 ## 6. 运行测试

@@ -15,6 +15,7 @@ from .store import SQLiteStore
 from .strategies.dag import DAGStrategy
 from .strategies.react import ReactStrategy
 from .strategies.simple import SimpleStrategy
+from .tools import ToolRegistry, create_tool_registry
 from .workspace.local_workspace import LocalWorkspace
 from .workspace.memory import MemoryWorkspace
 
@@ -33,15 +34,17 @@ class Executor:
         llm_service: LLMService,
         router: RuleRouter,
         workspace_root: Path,
+        tool_registry: ToolRegistry | None = None,
     ) -> None:
         self.store = store  # 持久化存储（任务、事件、Token 用量）。
         self.llm_service = llm_service  # LLM 服务（含主/备模型切换）。
         self.router = router  # 规则路由器（复杂度评分 + 策略选择）。
         self.workspace_root = Path(workspace_root)  # 文件工作区根目录。
         # 预创建三种策略实例，按路由结果复用，避免每次执行重复初始化。
-        self._simple = SimpleStrategy(llm_service)
-        self._dag = DAGStrategy(llm_service)
-        self._react = ReactStrategy(llm_service)
+        registry = tool_registry or create_tool_registry()
+        self._simple = SimpleStrategy(llm_service, registry)
+        self._dag = DAGStrategy(llm_service, registry=registry)
+        self._react = ReactStrategy(llm_service, registry)
         # 后台任务集合：持有引用防止被 GC，完成后自动移除。
         self._tasks: set[asyncio.Task[Any]] = set()
         # 取消标记集合：记录被取消的任务 ID，供执行中检查。

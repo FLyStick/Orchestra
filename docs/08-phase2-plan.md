@@ -1,8 +1,9 @@
 # Orchestra 第二阶段实施规划
 
-> 状态：包 1 已实现（路由评测 89/89、拆解评测 6/6），包 2/包 3 待按序实施
+> 状态：包 1、包 2 已实现，包 3 待按序实施
 >
 > 包 1 落地：ScorerV2 特征/置信度、RoutingDecision 可解释因子、DecompositionPlanner + PlanValidator（场景模板 + LLM 规划，校验失败回退规则）、Simple 低置信/RAG 失败升级闭环、路由与拆解黄金用例与评测入口。
+> 包 2 落地：真实 RAG 已跑通（文档解析/分块、Embedding、ChromaDB、混合检索 + Rerank、CLI/API/Tool 接入），详见 [docs/09-package2-report.md](docs/09-package2-report.md)。
 > 日期：2026-08-20
 > 基线：P4.5 DAG + React 组合编排已落地（docs/07）
 
@@ -89,7 +90,7 @@ Input → feature extraction → score + confidence + reasons
 
 交付物：`docs/golden/routing-cases.json`、`ScorerV2`、`DecompositionPlanner`、`PlanValidator`、评测报告入口。
 
-## 4. 包 2：真实 RAG 落地
+## 4. 包 2：真实 RAG 落地（已实现）
 
 ### 4.1 文档导入与解析
 
@@ -106,20 +107,20 @@ Input → feature extraction → score + confidence + reasons
 ### 4.3 Embedding
 
 - 定义 `EmbeddingProvider` 接口，支持两种实现：
-  - `openai`：复用 OpenAI 兼容接口，便于已有 API Key 快速接入。
-  - `local`：使用 `sentence-transformers` 加载本地模型，默认 `BAAI/bge-small-zh-v1.5`。
-- 模型下载依赖网络，Docker/部署文档中说明首次下载与离线缓存方案。
+  - `openai`：复用 OpenAI 兼容接口，可接入 DashScope 等，实施使用 `qwen3.7-text-embedding`。
+  - `local`：使用 `sentence-transformers` 加载本地模型（可选），例如 `BAAI/bge-small-zh-v1.5`。
+- 模型下载依赖网络，docker/README.md 中说明首次下载与离线缓存方案。
 
 ### 4.4 ChromaDB
 
-- 向量库优先使用 ChromaDB 本地持久化模式，路径由 `ORCHESTRA_CHROMA_PATH` 控制。
-- 每个部门一个 Collection 前缀，例如 `hr_policy`、`risk_rules`、`finance_policy`。
-- 预留 ChromaDB Server 模式，`ORCHESTRA_CHROMA_HOST/PORT` 配置后切换客户端。
+- 向量库支持 ChromaDB 本地持久化与 Server 模式，路径由 `ORCHESTRA_CHROMA_PATH` 控制。
+- 每个部门一个 Collection，例如 `orchestra_hr`、`orchestra_risk`、`orchestra_finance`。
+- ChromaDB Server 模式已实现，`ORCHESTRA_CHROMA_HOST/PORT` 配置后由 `HttpClient` 连接。
 
 ### 4.5 混合检索与 Rerank
 
-- `RetrievalService` 同时运行关键词检索（BM25）与向量检索，按权重融合。
-- 候选集 topN 默认 5-10 条，可选 Rerank 模型（如 `bge-reranker-base`）。
+- `RetrievalService` 同时运行关键词检索（BM25）与向量检索，通过 RRF 融合候选。
+- 候选集 topN 默认 5 条，Rerank 精排使用 `gte-rerank-v2`，失败时保留原融合结果。
 - 检索结果统一为 `RetrievedChunk`：文本、来源、相似度、命中位置。
 
 ### 4.6 证据与拒答
@@ -151,10 +152,23 @@ Input → feature extraction → score + confidence + reasons
 
 ### 4.10 验收标准
 
-- 至少人事、风控两个部门使用真实流程跑通，并保留 Mock 兜底。
-- 检索命中率与溯源率达到目标占位（hit@5 >= 85%，溯源率 >= 90%）。
-- 文档导入、索引、检索 API 可操作，ChromaDB 数据持久化可重启复用。
-- `.env` 中 Embedding 与 ChromaDB 变量可切换。
+- `[已实现]` 人事、风控、财务知识库通过真实流程索引，并保留 Mock 兜底。
+- `[待回填]` 检索命中率与溯源率达到目标占位（hit@5 >= 85%，溯源率 >= 90%），待黄金检索用例评测。
+- `[已实现]` 文档导入、索引、检索 API 可操作；ChromaDB 数据持久化重启复用待复测。
+- `[已实现]` `.env` 中 Embedding、ChromaDB 与 Rerank 变量可切换。
+
+### 4.11 实施记录
+
+主体实现与验证均已落地：
+
+- 代码：`src/orchestra/rag/`（parsing、chunking、embeddings、rerank、vector_store、retrieval、ingestion、manifest、service）、`src/orchestra/rag_cli.py`、`src/orchestra/contracts/rag.py`。
+- 接入：`RetrievalRAGTool` 已接入 Executor，`create_app` 自动组装 RAG 服务与工具注册表；未配置 RAG 时保留原 KeywordRAGTool 兜底。
+- API：`POST/GET /api/v2/documents`、`POST /api/v2/documents/ingest`、`DELETE /api/v2/documents/{document_id}`、`POST /api/v2/knowledge/search`。
+- CLI：`python -m orchestra.rag_cli seed|ingest|search|list|delete`。
+- 真实链路验证：Docker ChromaDB（127.0.0.1:8001）+ DashScope Embedding + MaaS Rerank 下，`seed` 成功索引 hr/risk/finance 共 15 份演示文档；`search --query "公司年假有几天" --department hr` 命中 `hr/leave-policy.md`，`reranked=true`，实测约 736ms。
+- 测试：`python -m unittest discover -s tests -v` 全量 55 项通过。
+
+检索评测占位指标（hit@5、MRR）尚未回填，待黄金检索用例沉淀后进行。
 
 ## 5. 包 3：Redis Streams + 自研状态机
 
@@ -222,20 +236,28 @@ PENDING -> ROUTING -> RUNNING -> SUCCEEDED
 | 包 | 依赖 | 用途 |
 | --- | --- | --- |
 | 包 1 | 暂无强制新增；可选 `scikit-learn` | 规则置信度与离线阈值校准 |
-| 包 2 | `chromadb`、`sentence-transformers`、`pypdf`、`python-docx`、`openpyxl`、`python-pptx`、`rank-bm25` | 文档解析、分块、Embedding、向量库、混合检索 |
+| 包 2 | `chromadb`、`pypdf`、`python-docx`、`openpyxl`、`python-pptx`、`rank-bm25`、`python-multipart` | 文档解析、分块、向量库、混合检索；本地 Embedding 可选 `sentence-transformers` |
 | 包 3 | `redis>=5.0`；测试用 `fakeredis` | Redis Streams、延迟队列、事件流 |
 
 依赖按包推进添加，统一安装到 Conda 环境 `orchestra`，并同步 `requirements*.txt`。
 
 ## 7. Docker 部署与环境准备
 
-以下命令由你手动部署，实施到对应包时再落地为正式文档（`docs/09-deployment.md`）与 `docker-compose.phase2.yml`。
+Redis / ChromaDB 的容器编排文件已放入 `docker/`，由你手动部署。所有命令在项目根目录执行：
+
+- 启动服务：`docker-compose -f docker/docker-compose.yml up -d`
+- 查看状态：`docker-compose -f docker/docker-compose.yml ps`
+- 停止服务：`docker-compose -f docker/docker-compose.yml down`
+- 手动部署、健康检查与清理步骤见 [docker/README.md](../docker/README.md)。
+
+不使用 Compose 时的等价命令：
 
 - Redis：`docker run -d --name orchestra-redis -p 6379:6379 -v orchestra_redis:/data redis:7.4-alpine`
 - ChromaDB：`docker run -d --name orchestra-chroma -p 8001:8000 -v orchestra_chroma:/data chromadb/chroma`
+
 - 本地开发不部署 Redis 时：`ORCHESTRA_WORKFLOW_DRIVER=sqlite`。
-- ChromaDB 本地模式无需 Docker，`ORCHESTRA_CHROMA_PATH` 指向数据目录即可。
-- Embedding 本地模型首次运行需要联网下载；也可使用 OpenAI 兼容接口，无需容器。
+- ChromaDB 本地模式无需 Docker，`ORCHESTRA_CHROMA_PATH` 指向 `data/chroma` 即可。
+- Embedding 本地模型首次运行需要联网下载，缓存方案见 `docker/README.md`；也可使用 OpenAI 兼容接口，无需容器。
 
 ## 8. `.env` 预留变量
 
@@ -247,8 +269,8 @@ PENDING -> ROUTING -> RUNNING -> SUCCEEDED
 | `ORCHESTRA_ROUTING_AMBIGUOUS_BAND` | 1 | `0.25,0.35` | 低置信区间，触发复核 |
 | `ORCHESTRA_HR_SCENARIO_THRESHOLD` | 1 | `0.30` | 人事场景独立阈值 |
 | `ORCHESTRA_EMBEDDING_PROVIDER` | 2 | `openai` 或 `local` | Embedding 实现 |
-| `ORCHESTRA_EMBEDDING_MODEL` | 2 | `BAAI/bge-small-zh-v1.5` | 本地模型名 |
-| `ORCHESTRA_EMBEDDING_DIM` | 2 | `512` | 向量维度 |
+| `ORCHESTRA_EMBEDDING_MODEL` | 2 | `qwen3.7-text-embedding` | DashScope Embedding 模型名 |
+| `ORCHESTRA_EMBEDDING_DIM` | 2 | `0` | 向量维度，0 表示自动识别 |
 | `ORCHESTRA_EMBEDDING_API_KEY` | 2 | 空 | API Embedding 密钥 |
 | `ORCHESTRA_CHROMA_PATH` | 2 | `data/chroma` | 本地持久化目录 |
 | `ORCHESTRA_CHROMA_HOST/PORT` | 2 | `127.0.0.1/8001` | ChromaDB Server 模式 |
@@ -257,7 +279,8 @@ PENDING -> ROUTING -> RUNNING -> SUCCEEDED
 | `ORCHESTRA_RETRIEVAL_TOP_K` | 2 | `5` | 检索返回条数 |
 | `ORCHESTRA_RETRIEVAL_MODE` | 2 | `hybrid` | `hybrid`/`vector`/`keyword` |
 | `ORCHESTRA_RERANK_ENABLED` | 2 | `false` | 是否启用 Rerank |
-| `ORCHESTRA_RERANK_MODEL` | 2 | `BAAI/bge-reranker-base` | Rerank 模型 |
+| `ORCHESTRA_RERANK_MODEL` | 2 | `gte-rerank-v2` | MaaS Rerank 模型 |
+| `ORCHESTRA_RERANK_BASE_URL` | 2 | 空 | MaaS Rerank 服务地址 |
 | `ORCHESTRA_WORKFLOW_DRIVER` | 3 | `sqlite` | `sqlite`/`redis` |
 | `ORCHESTRA_REDIS_URL` | 3 | `redis://127.0.0.1:6379/0` | Redis 连接地址 |
 | `ORCHESTRA_REDIS_STREAM_PREFIX` | 3 | `orchestra` | Stream Key 前缀 |
@@ -273,7 +296,7 @@ PENDING -> ROUTING -> RUNNING -> SUCCEEDED
 | 阶段 | 周期 | 入口 | 出口 |
 | --- | --- | --- | --- |
 | 包 1：路由与拆解底座 | 约 2-3 周 | 扩展现有 Router/evals | 路由回归通过，拆解计划可验证 |
-| 包 2：真实 RAG 落地 | 约 2-3 周 | 依赖包 1 评测集 | 人事/风控真实 RAG 链路通过 |
+| 包 2：真实 RAG 落地 | 约 2-3 周 | 依赖包 1 评测集 | 已实现（真实链路跑通，检索评测指标待回填） |
 | 包 3：Redis Streams 工作流 | 约 3 周 | 依赖包 2 稳定链路 | 重试/恢复/多 Worker 验收通过 |
 
 ## 10. 风险与预案
