@@ -102,7 +102,10 @@ class Executor:
             {
                 "strategy": decision.strategy.value,
                 "complexity_score": decision.complexity_score,
+                "confidence": decision.confidence,
                 "reason": decision.reason,
+                "reasons": list(decision.reasons),
+                "features": decision.features.to_dict() if decision.features else None,
             },
         )
 
@@ -121,6 +124,15 @@ class Executor:
         task_context = dict(task_input.context)
         if decision.scenario_id:
             task_context["scenario_id"] = decision.scenario_id
+        # 路由决策的完整快照注入策略上下文，Simple 升级闭环据此判断低置信度。
+        task_context["routing_decision"] = {
+            "strategy": decision.strategy.value,
+            "confidence": decision.confidence,
+            "complexity_score": decision.complexity_score,
+            "reasons": list(decision.reasons),
+            "scenario_id": decision.scenario_id,
+        }
+        task_context["routing_escalation"] = "react"
 
         context = StrategyContext(
             task_id=task_id,

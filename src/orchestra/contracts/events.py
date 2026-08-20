@@ -12,6 +12,7 @@ class EventType(str, Enum):
     TASK_CREATED = "task.created"
     TASK_ROUTED = "task.routed"
     STRATEGY_STARTED = "strategy.started"
+    ROUTING_ESCALATED = "routing.escalated"
     AGENT_STARTED = "agent.started"
     AGENT_COMPLETED = "agent.completed"
     TOOL_CALLED = "tool.called"

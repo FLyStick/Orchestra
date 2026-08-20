@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from orchestra.config import Settings
-from orchestra.evals import GOLDEN_CASES, evaluate_cases
+from orchestra.evals import GOLDEN_CASES, evaluate_cases, evaluate_routing, _load_routing_cases
 
 
 class EvalSmokeTest(unittest.TestCase):
@@ -34,6 +34,17 @@ class EvalSmokeTest(unittest.TestCase):
             self.assertGreater(report.total_tokens, 0)
             # 目标通过率占位值应为 0.87（验收口径）。
             self.assertAlmostEqual(report.target_pass_rate, 0.87)
+
+    def test_routing_golden_has_at_least_60_cases(self) -> None:
+        """路由黄金集应达到包 1 验收门槛 60 条以上。"""
+        cases = _load_routing_cases(Settings().routing_golden_file)
+        self.assertGreaterEqual(len(cases), 60)
+
+    def test_routing_eval_accuracy(self) -> None:
+        """纯规则路由评测应达到验收占位准确率 90%。"""
+        report = evaluate_routing()
+        self.assertGreaterEqual(report.total, 60)
+        self.assertGreaterEqual(report.accuracy, 0.9)
 
 
 if __name__ == "__main__":

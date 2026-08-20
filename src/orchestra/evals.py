@@ -19,6 +19,8 @@ from .contracts.task import TaskInput
 from .executor import Executor
 from .llm import LLMService, create_llm_provider
 from .router import RuleRouter
+from .planning import DecompositionPlanner, PlanValidator
+from .scenarios import select_scenario
 from .store import SQLiteStore
 from .workspace.local_workspace import LocalWorkspace
 
@@ -99,6 +101,299 @@ class EvalReport:
     duration_seconds: float
     note: str
     cases: list[CaseResult] = field(default_factory=list)
+
+@dataclass(frozen=True)
+class RoutingGoldenCase:
+    """路由黄金用例：期望策略、期望场景与部门上下文。"""
+
+    case_id: str
+    query: str
+    expected_strategy: str
+    expected_scenario: str | None = None
+    department: str = ""
+    tags: tuple[str, ...] = ()
+
+    @classmethod
+    def from_dict(cls, item: dict[str, Any]) -> "RoutingGoldenCase":
+        return cls(
+            case_id=str(item.get("id", "")),
+            query=str(item.get("query", "")),
+            expected_strategy=str(item.get("expected_strategy", "")),
+            expected_scenario=item.get("expected_scenario") or None,
+            department=str(item.get("department", "")),
+            tags=tuple(item.get("tags") or ()),
+        )
+
+
+@dataclass
+class RoutingCaseResult:
+    """单条路由用例的评测结果。"""
+
+    case_id: str
+    query: str
+    expected_strategy: str
+    actual_strategy: str
+    passed: bool
+    confidence: float
+    complexity_score: float
+    scenario_id: str | None
+    reasons: list[str]
+
+
+@dataclass
+class RoutingEvalReport:
+    """路由评测汇总报告：准确率、置信度与分部门指标。"""
+
+    total: int
+    passed: int
+    accuracy: float
+    avg_confidence: float
+    low_confidence_count: int
+    per_department: dict[str, dict[str, float]]
+    duration_seconds: float
+    note: str
+    cases: list[RoutingCaseResult] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class DecompositionGoldenCase:
+    """拆解评测用例：期望计划来源、子任务 id 与依赖边。"""
+
+    case_id: str
+    query: str
+    expected_planner: str
+    expected_ids: tuple[str, ...]
+    expected_edges: tuple[tuple[str, str], ...]
+    department: str = ""
+
+    @classmethod
+    def from_dict(cls, item: dict[str, Any]) -> "DecompositionGoldenCase":
+        return cls(
+            case_id=str(item.get("id", "")),
+            query=str(item.get("query", "")),
+            expected_planner=str(item.get("expected_planner", "rule")),
+            expected_ids=tuple(str(part) for part in item.get("expected_ids") or ()),
+            expected_edges=tuple(
+                (str(edge[0]), str(edge[1]))
+                for edge in item.get("expected_edges") or ()
+            ),
+            department=str(item.get("department", "")),
+        )
+
+
+@dataclass
+class DecompositionCaseResult:
+    """单条拆解用例的评测结果。"""
+
+    case_id: str
+    query: str
+    passed: bool
+    valid: bool
+    planner: str
+    id_recall: float
+    edge_f1: float
+    reasons: list[str]
+
+
+@dataclass
+class DecompositionEvalReport:
+    """拆解评测汇总报告：计划合法率与拆解质量指标。"""
+
+    total: int
+    passed: int
+    plans_valid: int
+    avg_id_recall: float
+    avg_edge_f1: float
+    duration_seconds: float
+    cases: list[DecompositionCaseResult] = field(default_factory=list)
+
+
+def _load_routing_cases(path: Path) -> tuple[RoutingGoldenCase, ...]:
+    """从 JSON 文件加载路由黄金用例。"""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return tuple(
+        RoutingGoldenCase.from_dict(item) for item in payload.get("cases", [])
+    )
+
+
+def evaluate_routing(
+    settings: Settings | None = None,
+    golden_path: Path | None = None,
+    limit: int | None = None,
+) -> RoutingEvalReport:
+    """运行路由评测，统计准确率、置信度与分部门指标。"""
+    settings = settings or Settings()
+    golden_path = golden_path or settings.routing_golden_file
+    cases = _load_routing_cases(golden_path)
+    selected = list(cases[:limit] if limit is not None else cases)
+    router = RuleRouter()
+    started = time.perf_counter()
+    results: list[RoutingCaseResult] = []
+    per_department: dict[str, dict[str, float]] = {}
+    for index, case in enumerate(selected):
+        decision = router.route(
+            TaskInput(
+                query=case.query,
+                session_id=f"routing-{index}",
+                context={"department": case.department},
+            )
+        )
+        strategy = decision.strategy.value
+        scenario_ok = (
+            case.expected_scenario is None
+            or decision.scenario_id == case.expected_scenario
+        )
+        passed = strategy == case.expected_strategy and scenario_ok
+        department = case.department or "generic"
+        entry = per_department.setdefault(department, {"total": 0.0, "passed": 0.0})
+        entry["total"] += 1.0
+        if passed:
+            entry["passed"] += 1.0
+        results.append(
+            RoutingCaseResult(
+                case_id=case.case_id,
+                query=case.query,
+                expected_strategy=case.expected_strategy,
+                actual_strategy=strategy,
+                passed=passed,
+                confidence=decision.confidence,
+                complexity_score=decision.complexity_score,
+                scenario_id=decision.scenario_id,
+                reasons=list(decision.reasons),
+            )
+        )
+    duration = round(time.perf_counter() - started, 3)
+    passed_count = sum(1 for item in results if item.passed)
+    avg_confidence = (
+        round(sum(item.confidence for item in results) / len(results), 4)
+        if results
+        else 0.0
+    )
+    low_confidence = sum(1 for item in results if item.confidence < 0.5)
+    for key in per_department:
+        total = per_department[key]["total"]
+        per_department[key] = {
+            "total": total,
+            "passed": per_department[key]["passed"],
+            "accuracy": round(per_department[key]["passed"] / total, 4) if total else 0.0,
+        }
+    return RoutingEvalReport(
+        total=len(results),
+        passed=passed_count,
+        accuracy=round(passed_count / len(results), 4) if results else 0.0,
+        avg_confidence=avg_confidence,
+        low_confidence_count=low_confidence,
+        per_department=per_department,
+        duration_seconds=duration,
+        note="路由黄金评测不调用 LLM，结果为纯规则路由实测值；90% 为验收占位目标。",
+        cases=results,
+    )
+
+
+def _load_decomposition_cases(path: Path) -> tuple[DecompositionGoldenCase, ...]:
+    """从 JSON 文件加载拆解评测用例。"""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return tuple(
+        DecompositionGoldenCase.from_dict(item) for item in payload.get("cases", [])
+    )
+
+
+def evaluate_decomposition(
+    path: Path | None = None,
+    limit: int | None = None,
+) -> DecompositionEvalReport:
+    """运行拆解评测：计划合法率、任务召回率与依赖边 F1。"""
+    settings = Settings()
+    golden_path = path or settings.routing_golden_file.parent / "decomposition-cases.json"
+    cases = _load_decomposition_cases(golden_path)
+    selected = list(cases[:limit] if limit is not None else cases)
+    planner = DecompositionPlanner()
+    validator = PlanValidator()
+    started = time.perf_counter()
+    results: list[DecompositionCaseResult] = []
+    for index, case in enumerate(selected):
+        task = TaskInput(
+            query=case.query,
+            session_id=f"decompose-{index}",
+            context={"department": case.department},
+        )
+        scenario = select_scenario(task)
+        plan = planner.plan(task, scenario)
+        validation = validator.validate(plan)
+        actual_ids = [spec.id for spec in plan.subtasks]
+        actual_edges = set()
+        for spec in plan.subtasks:
+            for dep in spec.dependencies:
+                actual_edges.add((dep, spec.id))
+        expected_ids = set(case.expected_ids)
+        expected_edges = set(case.expected_edges)
+        id_matched = len(expected_ids.intersection(actual_ids))
+        id_precision = id_matched / len(actual_ids) if actual_ids else 0.0
+        id_recall = id_matched / len(expected_ids) if expected_ids else 0.0
+        id_f1 = (
+            2 * id_precision * id_recall / (id_precision + id_recall)
+            if id_precision + id_recall > 0
+            else 0.0
+        )
+        edge_matched = len(expected_edges.intersection(actual_edges))
+        edge_precision = edge_matched / len(actual_edges) if actual_edges else 0.0
+        edge_recall = edge_matched / len(expected_edges) if expected_edges else 0.0
+        edge_f1 = (
+            2 * edge_precision * edge_recall / (edge_precision + edge_recall)
+            if edge_precision + edge_recall > 0
+            else 0.0
+        )
+        reasons: list[str] = []
+        if not validation.valid:
+            reasons.extend(validation.errors)
+        if set(actual_ids) != expected_ids:
+            reasons.append(f"ids={actual_ids}")
+        if actual_edges != expected_edges:
+            reasons.append(f"edges={sorted(actual_edges)}")
+        if plan.planner != case.expected_planner:
+            reasons.append(f"planner={plan.planner}")
+        passed = (
+            validation.valid
+            and set(actual_ids) == expected_ids
+            and actual_edges == expected_edges
+            and plan.planner == case.expected_planner
+        )
+        results.append(
+            DecompositionCaseResult(
+                case_id=case.case_id,
+                query=case.query,
+                passed=passed,
+                valid=validation.valid,
+                planner=plan.planner,
+                id_recall=round(id_recall, 4),
+                edge_f1=round(edge_f1, 4),
+                reasons=reasons,
+            )
+        )
+    duration = round(time.perf_counter() - started, 3)
+    passed_count = sum(1 for item in results if item.passed)
+    plans_valid = sum(1 for item in results if item.valid)
+    avg_id_recall = (
+        round(sum(item.id_recall for item in results) / len(results), 4)
+        if results
+        else 0.0
+    )
+    edge_cases = [item for item, case in zip(results, selected) if case.expected_edges]
+    avg_edge_f1 = (
+        round(sum(item.edge_f1 for item in edge_cases) / len(edge_cases), 4)
+        if edge_cases
+        else 0.0
+    )
+    return DecompositionEvalReport(
+        total=len(results),
+        passed=passed_count,
+        plans_valid=plans_valid,
+        avg_id_recall=avg_id_recall,
+        avg_edge_f1=avg_edge_f1,
+        duration_seconds=duration,
+        cases=results,
+    )
+
 
 
 def _p95(values: list[int]) -> float:
@@ -212,19 +507,25 @@ async def evaluate_cases(
 
 
 def main() -> None:
-    """命令行入口：python -m orchestra.evals --provider mock|openai。"""
-    parser = argparse.ArgumentParser(description="Orchestra P4 黄金用例评测器")
+    """命令行入口：python -m orchestra.evals --mode golden|routing|decomposition。"""
+    parser = argparse.ArgumentParser(description="Orchestra 黄金用例与路由/拆解评测器")
+    parser.add_argument(
+        "--mode",
+        choices=("golden", "routing", "decomposition"),
+        default="golden",
+        help="golden=P4 问答跑分；routing=路由准确率；decomposition=拆解质量",
+    )
     parser.add_argument(
         "--provider",
         choices=("mock", "openai"),
         default="mock",
-        help="LLM Provider，mock 不消耗真实 Token",
+        help="LLM Provider，mock 不消耗真实 Token；仅 golden 模式使用",
     )
     parser.add_argument(
         "--max-cases",
         type=int,
-        default=len(GOLDEN_CASES),
-        help="最多执行的用例数，默认全部",
+        default=0,
+        help="最多执行条数，0 表示全部",
     )
     parser.add_argument(
         "--output",
@@ -233,8 +534,14 @@ def main() -> None:
         help="报告 JSON 输出路径，默认仅打印到标准输出",
     )
     args = parser.parse_args()
-    settings = Settings(llm_provider=args.provider)
-    report = asyncio.run(evaluate_cases(settings, limit=args.max_cases))
+    limit = args.max_cases or None
+    if args.mode == "routing":
+        report = evaluate_routing(limit=limit)
+    elif args.mode == "decomposition":
+        report = evaluate_decomposition(limit=limit)
+    else:
+        settings = Settings(llm_provider=args.provider)
+        report = asyncio.run(evaluate_cases(settings, limit=limit))
     payload: dict[str, Any] = asdict(report)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     if args.output:

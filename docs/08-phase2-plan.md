@@ -1,6 +1,8 @@
-# Orchestra 第二阶段实施规划（待实施）
+# Orchestra 第二阶段实施规划
 
-> 状态：规划已完成，待按“包 1 → 包 2 → 包 3”顺序实施
+> 状态：包 1 已实现（路由评测 89/89、拆解评测 6/6），包 2/包 3 待按序实施
+>
+> 包 1 落地：ScorerV2 特征/置信度、RoutingDecision 可解释因子、DecompositionPlanner + PlanValidator（场景模板 + LLM 规划，校验失败回退规则）、Simple 低置信/RAG 失败升级闭环、路由与拆解黄金用例与评测入口。
 > 日期：2026-08-20
 > 基线：P4.5 DAG + React 组合编排已落地（docs/07）
 
@@ -241,7 +243,7 @@ PENDING -> ROUTING -> RUNNING -> SUCCEEDED
 
 | 变量 | 阶段 | 默认建议 | 说明 |
 | --- | --- | --- | --- |
-| `ORCHESTRA_ROUTING_GOLDEN_PATH` | 1 | `data/golden/routing.json` | 路由评测集路径 |
+| `ORCHESTRA_ROUTING_GOLDEN_PATH` | 1 | `docs/golden/routing-cases.json` | 路由评测集路径 |
 | `ORCHESTRA_ROUTING_AMBIGUOUS_BAND` | 1 | `0.25,0.35` | 低置信区间，触发复核 |
 | `ORCHESTRA_HR_SCENARIO_THRESHOLD` | 1 | `0.30` | 人事场景独立阈值 |
 | `ORCHESTRA_EMBEDDING_PROVIDER` | 2 | `openai` 或 `local` | Embedding 实现 |

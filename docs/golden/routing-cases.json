@@ -1,0 +1,718 @@
+{
+  "version": "1.0",
+  "description": "包 1 路由黄金评测集（docs/golden）：覆盖人事、风控、财务、招采与通用请求。",
+  "cases": [
+    {
+      "id": "hr-simple-001",
+      "query": "公司年假有几天",
+      "expected_strategy": "simple",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-simple-002",
+      "query": "产假多少天",
+      "expected_strategy": "simple",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-simple-003",
+      "query": "陪产假多少天",
+      "expected_strategy": "simple",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-simple-004",
+      "query": "婚假有几天",
+      "expected_strategy": "simple",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-simple-005",
+      "query": "试用期最长几个月",
+      "expected_strategy": "simple",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-simple-006",
+      "query": "离职需要提前多少天",
+      "expected_strategy": "simple",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-simple-007",
+      "query": "年假未休完可以顺延吗",
+      "expected_strategy": "simple",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-simple-008",
+      "query": "社保缴费基数如何确定",
+      "expected_strategy": "simple",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-simple-009",
+      "query": "住房公积金缴存比例是多少",
+      "expected_strategy": "simple",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-simple-010",
+      "query": "绩效考核周期是多久",
+      "expected_strategy": "simple",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-simple-011",
+      "query": "高温补贴每月多少钱",
+      "expected_strategy": "simple",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-simple-012",
+      "query": "员工持股计划面向哪些员工",
+      "expected_strategy": "simple",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-simple-013",
+      "query": "哺乳假每天多长时间",
+      "expected_strategy": "simple",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-simple-014",
+      "query": "转正需要提交哪些材料",
+      "expected_strategy": "simple",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-simple-015",
+      "query": "年假和调休有什么区别",
+      "expected_strategy": "simple",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-simple-016",
+      "query": "工资发放日期在哪里查看",
+      "expected_strategy": "simple",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-react-001",
+      "query": "请调用rag_search检索年假制度",
+      "expected_strategy": "react",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-react-002",
+      "query": "核实产假天数并调用rag_search确认",
+      "expected_strategy": "react",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-react-003",
+      "query": "比较年假婚假产假制度并且分析差异然后调用rag_search核实",
+      "expected_strategy": "react",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-react-004",
+      "query": "梳理员工离职流程并且调用rag_search检查交接清单是否需要更新",
+      "expected_strategy": "react",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-react-005",
+      "query": "请用工具检索绩效考核制度并给出结论",
+      "expected_strategy": "react",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-react-006",
+      "query": "调用rag_search对比转正材料和社保材料",
+      "expected_strategy": "react",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-react-007",
+      "query": "分析产假和陪产假政策并调用rag_search确认来源",
+      "expected_strategy": "react",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-react-008",
+      "query": "核实加班调休政策后调用rag_search生成答复",
+      "expected_strategy": "react",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-react-009",
+      "query": "检查公司年假制度是否支持顺延并检索制度原文",
+      "expected_strategy": "react",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "hr-react-010",
+      "query": "调用rag_search查询离职交接注意事项",
+      "expected_strategy": "react",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "risk-dag-001",
+      "query": "分析合同付款风险然后生成合规清单",
+      "expected_strategy": "dag",
+      "expected_scenario": "risk_contract_review",
+      "department": "risk",
+      "tags": []
+    },
+    {
+      "id": "risk-dag-002",
+      "query": "审查合同违约金条款并输出风险等级",
+      "expected_strategy": "dag",
+      "expected_scenario": "risk_contract_review",
+      "department": "risk",
+      "tags": []
+    },
+    {
+      "id": "risk-dag-003",
+      "query": "检查验收条款与付款节点是否合规",
+      "expected_strategy": "dag",
+      "expected_scenario": "risk_contract_review",
+      "department": "risk",
+      "tags": []
+    },
+    {
+      "id": "risk-dag-004",
+      "query": "分析采购合同付款风险并生成处置建议",
+      "expected_strategy": "dag",
+      "expected_scenario": "risk_contract_review",
+      "department": "risk",
+      "tags": []
+    },
+    {
+      "id": "risk-dag-005",
+      "query": "审查合同争议解决条款的合规性",
+      "expected_strategy": "dag",
+      "expected_scenario": "risk_contract_review",
+      "department": "risk",
+      "tags": []
+    },
+    {
+      "id": "risk-dag-006",
+      "query": "风控部门审查合同中的付款和验收条款",
+      "expected_strategy": "dag",
+      "expected_scenario": "risk_contract_review",
+      "department": "risk",
+      "tags": []
+    },
+    {
+      "id": "risk-dag-007",
+      "query": "合同条款风险审查",
+      "expected_strategy": "dag",
+      "expected_scenario": "risk_contract_review",
+      "department": "risk",
+      "tags": []
+    },
+    {
+      "id": "risk-dag-008",
+      "query": "帮我审查合同中的违约金和争议解决条款",
+      "expected_strategy": "dag",
+      "expected_scenario": "risk_contract_review",
+      "department": "risk",
+      "tags": []
+    },
+    {
+      "id": "risk-dag-009",
+      "query": "检查合同中付款节点和验收条款的风险",
+      "expected_strategy": "dag",
+      "expected_scenario": "risk_contract_review",
+      "department": "risk",
+      "tags": []
+    },
+    {
+      "id": "risk-dag-010",
+      "query": "生成合同合规审查清单",
+      "expected_strategy": "dag",
+      "expected_scenario": "risk_contract_review",
+      "department": "risk",
+      "tags": []
+    },
+    {
+      "id": "risk-dag-011",
+      "query": "风控审查合同样本并输出审查意见",
+      "expected_strategy": "dag",
+      "expected_scenario": "risk_contract_review",
+      "department": "risk",
+      "tags": []
+    },
+    {
+      "id": "risk-dag-012",
+      "query": "合同违约责任条款审查",
+      "expected_strategy": "dag",
+      "expected_scenario": "risk_contract_review",
+      "department": "risk",
+      "tags": []
+    },
+    {
+      "id": "fin-simple-001",
+      "query": "报销标准是什么",
+      "expected_strategy": "simple",
+      "expected_scenario": "finance_policy_qa",
+      "department": "finance",
+      "tags": []
+    },
+    {
+      "id": "fin-simple-002",
+      "query": "差旅报销需要提供哪些材料",
+      "expected_strategy": "simple",
+      "expected_scenario": "finance_policy_qa",
+      "department": "finance",
+      "tags": []
+    },
+    {
+      "id": "fin-simple-003",
+      "query": "培训报销年度上限是多少",
+      "expected_strategy": "simple",
+      "expected_scenario": "finance_policy_qa",
+      "department": "finance",
+      "tags": []
+    },
+    {
+      "id": "fin-simple-004",
+      "query": "国内出差每天补贴多少",
+      "expected_strategy": "simple",
+      "expected_scenario": "finance_policy_qa",
+      "department": "finance",
+      "tags": []
+    },
+    {
+      "id": "fin-simple-005",
+      "query": "加班餐费报销标准是多少",
+      "expected_strategy": "simple",
+      "expected_scenario": "finance_policy_qa",
+      "department": "finance",
+      "tags": []
+    },
+    {
+      "id": "fin-simple-006",
+      "query": "差旅补贴标准是什么",
+      "expected_strategy": "simple",
+      "expected_scenario": "finance_policy_qa",
+      "department": "finance",
+      "tags": []
+    },
+    {
+      "id": "fin-simple-007",
+      "query": "培训费报销需要什么证明",
+      "expected_strategy": "simple",
+      "expected_scenario": "finance_policy_qa",
+      "department": "finance",
+      "tags": []
+    },
+    {
+      "id": "fin-simple-008",
+      "query": "医疗费用可以报销吗",
+      "expected_strategy": "simple",
+      "expected_scenario": "finance_policy_qa",
+      "department": "finance",
+      "tags": []
+    },
+    {
+      "id": "fin-simple-009",
+      "query": "报销时限是多久",
+      "expected_strategy": "simple",
+      "expected_scenario": "finance_policy_qa",
+      "department": "finance",
+      "tags": []
+    },
+    {
+      "id": "fin-simple-010",
+      "query": "项目差旅费预算怎么申请",
+      "expected_strategy": "simple",
+      "expected_scenario": "finance_policy_qa",
+      "department": "finance",
+      "tags": []
+    },
+    {
+      "id": "fin-review-001",
+      "query": "校验这张报销单是否合规",
+      "expected_strategy": "dag",
+      "expected_scenario": "finance_invoice_review",
+      "department": "finance",
+      "tags": []
+    },
+    {
+      "id": "fin-review-002",
+      "query": "检查发票是否符合报销制度",
+      "expected_strategy": "dag",
+      "expected_scenario": "finance_invoice_review",
+      "department": "finance",
+      "tags": []
+    },
+    {
+      "id": "fin-review-003",
+      "query": "报销单据校验并生成修改建议",
+      "expected_strategy": "dag",
+      "expected_scenario": "finance_invoice_review",
+      "department": "finance",
+      "tags": []
+    },
+    {
+      "id": "fin-review-004",
+      "query": "校验报销单中的发票信息",
+      "expected_strategy": "dag",
+      "expected_scenario": "finance_invoice_review",
+      "department": "finance",
+      "tags": []
+    },
+    {
+      "id": "fin-review-005",
+      "query": "这份差旅报销单有问题吗",
+      "expected_strategy": "dag",
+      "expected_scenario": "finance_invoice_review",
+      "department": "finance",
+      "tags": []
+    },
+    {
+      "id": "fin-review-006",
+      "query": "发票不满足报销政策怎么办",
+      "expected_strategy": "dag",
+      "expected_scenario": "finance_invoice_review",
+      "department": "finance",
+      "tags": []
+    },
+    {
+      "id": "fin-review-007",
+      "query": "校验出差报销单并输出不满足项",
+      "expected_strategy": "dag",
+      "expected_scenario": "finance_invoice_review",
+      "department": "finance",
+      "tags": []
+    },
+    {
+      "id": "fin-review-008",
+      "query": "检查报销单中缺少哪些附件",
+      "expected_strategy": "dag",
+      "expected_scenario": "finance_invoice_review",
+      "department": "finance",
+      "tags": []
+    },
+    {
+      "id": "pro-simple-001",
+      "query": "供应商准入需要什么条件",
+      "expected_strategy": "simple",
+      "expected_scenario": "procurement_process_qa",
+      "department": "procurement",
+      "tags": []
+    },
+    {
+      "id": "pro-simple-002",
+      "query": "采购合同有效期多久",
+      "expected_strategy": "simple",
+      "expected_scenario": "procurement_process_qa",
+      "department": "procurement",
+      "tags": []
+    },
+    {
+      "id": "pro-simple-003",
+      "query": "供应商管理平台如何登录",
+      "expected_strategy": "simple",
+      "expected_scenario": "procurement_process_qa",
+      "department": "procurement",
+      "tags": []
+    },
+    {
+      "id": "pro-simple-004",
+      "query": "供应商绩效考核谁负责",
+      "expected_strategy": "simple",
+      "expected_scenario": "procurement_process_qa",
+      "department": "procurement",
+      "tags": []
+    },
+    {
+      "id": "pro-simple-005",
+      "query": "招采咨询电话是多少",
+      "expected_strategy": "simple",
+      "expected_scenario": "procurement_process_qa",
+      "department": "procurement",
+      "tags": []
+    },
+    {
+      "id": "pro-simple-006",
+      "query": "采购订单状态在哪里看",
+      "expected_strategy": "simple",
+      "expected_scenario": "procurement_process_qa",
+      "department": "procurement",
+      "tags": []
+    },
+    {
+      "id": "pro-simple-007",
+      "query": "供应商联系人信息在哪里更新",
+      "expected_strategy": "simple",
+      "expected_scenario": "procurement_process_qa",
+      "department": "procurement",
+      "tags": []
+    },
+    {
+      "id": "pro-dag-001",
+      "query": "招采流程当前处于哪个节点",
+      "expected_strategy": "dag",
+      "expected_scenario": "procurement_process_qa",
+      "department": "procurement",
+      "tags": []
+    },
+    {
+      "id": "pro-dag-002",
+      "query": "下一步招采流程需要什么材料",
+      "expected_strategy": "dag",
+      "expected_scenario": "procurement_process_qa",
+      "department": "procurement",
+      "tags": []
+    },
+    {
+      "id": "pro-dag-003",
+      "query": "供应商资质审核流程是什么",
+      "expected_strategy": "dag",
+      "expected_scenario": "procurement_process_qa",
+      "department": "procurement",
+      "tags": []
+    },
+    {
+      "id": "pro-dag-004",
+      "query": "招标流程有哪些步骤",
+      "expected_strategy": "dag",
+      "expected_scenario": "procurement_process_qa",
+      "department": "procurement",
+      "tags": []
+    },
+    {
+      "id": "pro-dag-005",
+      "query": "采购流程分几个阶段",
+      "expected_strategy": "dag",
+      "expected_scenario": "procurement_process_qa",
+      "department": "procurement",
+      "tags": []
+    },
+    {
+      "id": "pro-dag-006",
+      "query": "供应商准入流程怎么走",
+      "expected_strategy": "dag",
+      "expected_scenario": "procurement_process_qa",
+      "department": "procurement",
+      "tags": []
+    },
+    {
+      "id": "pro-dag-007",
+      "query": "招采项目合同签署节点在什么时候",
+      "expected_strategy": "dag",
+      "expected_scenario": "procurement_process_qa",
+      "department": "procurement",
+      "tags": []
+    },
+    {
+      "id": "gen-dag-001",
+      "query": "分析市场趋势并且生成行业报告",
+      "expected_strategy": "dag",
+      "expected_scenario": null,
+      "department": "",
+      "tags": []
+    },
+    {
+      "id": "gen-dag-002",
+      "query": "梳理文档内容然后整理要点再生成摘要",
+      "expected_strategy": "dag",
+      "expected_scenario": null,
+      "department": "",
+      "tags": []
+    },
+    {
+      "id": "gen-dag-003",
+      "query": "比较两个方案成本并且分析优缺点然后生成推荐清单",
+      "expected_strategy": "dag",
+      "expected_scenario": null,
+      "department": "",
+      "tags": []
+    },
+    {
+      "id": "gen-dag-004",
+      "query": "计算部门预算差额并比较上月数据再生成分析报告",
+      "expected_strategy": "dag",
+      "expected_scenario": null,
+      "department": "",
+      "tags": []
+    },
+    {
+      "id": "gen-dag-005",
+      "query": "汇总多个表格并检查数据一致性然后生成汇总报告",
+      "expected_strategy": "dag",
+      "expected_scenario": null,
+      "department": "",
+      "tags": []
+    },
+    {
+      "id": "gen-dag-006",
+      "query": "分析项目预算并生成应对方案同时输出执行计划",
+      "expected_strategy": "dag",
+      "expected_scenario": null,
+      "department": "",
+      "tags": []
+    },
+    {
+      "id": "gen-dag-007",
+      "query": "整理客户反馈然后分析投诉原因再生成改进方案",
+      "expected_strategy": "dag",
+      "expected_scenario": null,
+      "department": "",
+      "tags": []
+    },
+    {
+      "id": "gen-simple-001",
+      "query": "你好",
+      "expected_strategy": "simple",
+      "expected_scenario": null,
+      "department": "",
+      "tags": []
+    },
+    {
+      "id": "gen-simple-002",
+      "query": "什么是企业年金",
+      "expected_strategy": "simple",
+      "expected_scenario": null,
+      "department": "",
+      "tags": []
+    },
+    {
+      "id": "gen-simple-003",
+      "query": "今天天气怎么样",
+      "expected_strategy": "simple",
+      "expected_scenario": null,
+      "department": "",
+      "tags": []
+    },
+    {
+      "id": "gen-simple-004",
+      "query": "屏幕共享怎么开",
+      "expected_strategy": "simple",
+      "expected_scenario": null,
+      "department": "",
+      "tags": []
+    },
+    {
+      "id": "gen-simple-005",
+      "query": "帮我写一句欢迎语",
+      "expected_strategy": "simple",
+      "expected_scenario": null,
+      "department": "",
+      "tags": []
+    },
+    {
+      "id": "gen-simple-006",
+      "query": "什么是分布式事务",
+      "expected_strategy": "simple",
+      "expected_scenario": null,
+      "department": "",
+      "tags": []
+    },
+    {
+      "id": "gen-react-001",
+      "query": "请调用工具查询知识库",
+      "expected_strategy": "react",
+      "expected_scenario": null,
+      "department": "",
+      "tags": []
+    },
+    {
+      "id": "gen-react-002",
+      "query": "检索公司制度并核实",
+      "expected_strategy": "react",
+      "expected_scenario": "hr_policy_qa",
+      "department": "hr",
+      "tags": []
+    },
+    {
+      "id": "gen-react-003",
+      "query": "调用rag_search搜索文件",
+      "expected_strategy": "react",
+      "expected_scenario": null,
+      "department": "",
+      "tags": []
+    },
+    {
+      "id": "gen-react-004",
+      "query": "使用工具读取工作区文档",
+      "expected_strategy": "react",
+      "expected_scenario": null,
+      "department": "",
+      "tags": []
+    },
+    {
+      "id": "gen-react-005",
+      "query": "调用rag_search查一下",
+      "expected_strategy": "react",
+      "expected_scenario": null,
+      "department": "",
+      "tags": []
+    },
+    {
+      "id": "gen-react-006",
+      "query": "用工具检索知识库中的文档",
+      "expected_strategy": "react",
+      "expected_scenario": null,
+      "department": "",
+      "tags": []
+    }
+  ]
+}

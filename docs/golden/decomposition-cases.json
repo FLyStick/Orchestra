@@ -1,0 +1,106 @@
+{
+  "version": "1.0",
+  "description": "包 1 拆解评测集（docs/golden）：覆盖场景模板、串行规则与并行规则规划。",
+  "cases": [
+    {
+      "id": "risk-template",
+      "query": "分析合同付款风险然后生成合规清单",
+      "department": "risk",
+      "expected_planner": "scenario",
+      "expected_ids": [
+        "t1",
+        "t2",
+        "t3"
+      ],
+      "expected_edges": [
+        [
+          "t1",
+          "t2"
+        ],
+        [
+          "t2",
+          "t3"
+        ]
+      ]
+    },
+    {
+      "id": "finance-review-template",
+      "query": "校验这张报销单是否合规",
+      "department": "finance",
+      "expected_planner": "scenario",
+      "expected_ids": [
+        "t1",
+        "t2",
+        "t3"
+      ],
+      "expected_edges": [
+        [
+          "t1",
+          "t2"
+        ],
+        [
+          "t2",
+          "t3"
+        ]
+      ]
+    },
+    {
+      "id": "procurement-dag-template",
+      "query": "招采流程当前处于哪个节点",
+      "department": "procurement",
+      "expected_planner": "scenario",
+      "expected_ids": [
+        "t1",
+        "t2"
+      ],
+      "expected_edges": [
+        [
+          "t1",
+          "t2"
+        ]
+      ]
+    },
+    {
+      "id": "generic-sequential-rule",
+      "query": "分析市场趋势并且生成行业报告然后整理摘要",
+      "department": "",
+      "expected_planner": "rule",
+      "expected_ids": [
+        "t1",
+        "t2",
+        "t3"
+      ],
+      "expected_edges": [
+        [
+          "t1",
+          "t2"
+        ],
+        [
+          "t2",
+          "t3"
+        ]
+      ]
+    },
+    {
+      "id": "generic-parallel-rule",
+      "query": "分析市场趋势并且生成行业报告",
+      "department": "",
+      "expected_planner": "rule",
+      "expected_ids": [
+        "t1",
+        "t2"
+      ],
+      "expected_edges": []
+    },
+    {
+      "id": "generic-single-rule",
+      "query": "你好",
+      "department": "",
+      "expected_planner": "rule",
+      "expected_ids": [
+        "t1"
+      ],
+      "expected_edges": []
+    }
+  ]
+}
