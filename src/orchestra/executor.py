@@ -9,6 +9,7 @@ from typing import Any
 from .contracts.events import EventType
 from .contracts.strategies import StrategyContext, StrategyType
 from .contracts.task import TaskInput, TaskStatus, TokenBudget
+from .contracts.workflow import TaskExecutionError
 from .llm import LLMService
 from .router import RuleRouter
 from .store import SQLiteStore
@@ -51,8 +52,15 @@ class Executor:
         self._cancel_flags: set[str] = set()
 
     # 创建任务后立即返回；实际执行放在事件循环的后台任务中。
-    def submit(self, task_input: TaskInput) -> str:
+    def submit(self, task_input: TaskInput, *, start: bool = True) -> str:
         """提交任务：落库 + 发创建事件，然后异步执行，立即返回 task_id。"""
+        task_id = self.create_pending_task(task_input)
+        if start:
+            self.launch(task_id)
+        return task_id
+
+    def create_pending_task(self, task_input: TaskInput) -> str:
+        """只创建 PENDING 任务并写入创建事件，不启动执行（供工作流驱动分发）。"""
         task_id = self.store.create_task(task_input)
         self.store.append_event(
             task_id,
@@ -62,20 +70,23 @@ class Executor:
                 "query_preview": task_input.query[:100],  # 只存前 100 字符预览。
             },
         )
+        return task_id
+
+    def launch(self, task_id: str) -> asyncio.Task[Any]:
+        """把已有任务放入事件循环后台执行，供 SqliteWorkflowDriver 复用。"""
         loop = asyncio.get_running_loop()
         background = loop.create_task(self.run(task_id))
         self._tasks.add(background)
         background.add_done_callback(self._tasks.discard)  # 完成后从集合移除。
-        return task_id
+        return background
 
     async def execute_sync(self, task_input: TaskInput) -> dict[str, Any]:
         """同步执行入口：直接等待任务完成（供测试或内部调用）。"""
         task_id = self.store.create_task(task_input)
         return await self.run(task_id)
 
-    async def run(self, task_id: str) -> dict[str, Any]:
+    async def run(self, task_id: str, *, finalize_failure: bool = True) -> dict[str, Any]:
         """执行任务主流程：路由 → 执行 → 落库 → 发事件。
-
         返回任务的最新记录（含状态、结果、错误等）。
         """
         started = time.monotonic()  # 记录开始时间，用于计算耗时。
@@ -83,22 +94,54 @@ class Executor:
         if task is None:
             return {}
         task_input = self._restore_input(task)  # 从存储记录还原输入契约。
-        self.store.update_task(task_id, status=TaskStatus.ROUTING)
+        current_status = TaskStatus(task["status"])
+        # 通过原子状态迁移认领任务，重复 Worker 认领会直接返回，避免双跑。
+        if current_status == TaskStatus.PENDING:
+            if not self.store.transition_task(
+                task_id,
+                expected_statuses=(TaskStatus.PENDING,),
+                status=TaskStatus.ROUTING,
+            ):
+                return self.store.get_task(task_id) or {}
+        elif current_status == TaskStatus.RETRYING:
+            if not self.store.transition_task(
+                task_id,
+                expected_statuses=(TaskStatus.RETRYING,),
+                status=TaskStatus.RUNNING,
+            ):
+                return self.store.get_task(task_id) or {}
+        elif current_status not in {TaskStatus.ROUTING, TaskStatus.RUNNING, TaskStatus.WAITING_DEPENDENCY}:
+            return task
 
         try:
             # 路由失败统一落 FAILED 并发出失败事件。
             decision = self.router.route(task_input)
         except ValueError as exc:
             duration_ms = int((time.monotonic() - started) * 1000)
-            self.store.update_task(task_id, status=TaskStatus.FAILED, error=str(exc), duration_ms=duration_ms)
-            self.store.append_event(task_id, EventType.TASK_FAILED.value, {"error": str(exc)})
+            if not finalize_failure:
+                # 只记录错误，状态留在 ROUTING，由驱动决定是否重试。
+                self.store.transition_task(
+                    task_id,
+                    expected_statuses=(TaskStatus.ROUTING,),
+                    status=TaskStatus.ROUTING,
+                    error=str(exc),
+                    duration_ms=duration_ms,
+                )
+                raise TaskExecutionError(str(exc), stage="routing", duration_ms=duration_ms) from exc
+            self._fail_task(task_id, str(exc), duration_ms)
             return self.store.get_task(task_id) or {}
 
         # 路由完成后若已被取消，直接返回当前状态，不再继续执行。
         if self._is_cancelled(task_id):
             return self.store.get_task(task_id) or {}
 
-        self.store.update_task(task_id, status=TaskStatus.RUNNING, strategy=decision.strategy.value)
+        if not self.store.transition_task(
+            task_id,
+            expected_statuses=(TaskStatus.ROUTING, TaskStatus.RUNNING, TaskStatus.WAITING_DEPENDENCY),
+            status=TaskStatus.RUNNING,
+            strategy=decision.strategy.value,
+        ):
+            return self.store.get_task(task_id) or {}
         self.store.append_event(
             task_id,
             EventType.TASK_ROUTED.value,
@@ -168,10 +211,18 @@ class Executor:
             # 策略执行过程统一落库与发事件，避免执行黑盒。
             result = await strategy.execute(context)
         except Exception as exc:
-            # 执行异常：落 FAILED 并记录错误信息。
+            # 执行异常：驱动模式下仅记录错误并抛给驱动；直接执行时落 FAILED。
             duration_ms = int((time.monotonic() - started) * 1000)
-            self.store.update_task(task_id, status=TaskStatus.FAILED, error=str(exc), duration_ms=duration_ms)
-            self.store.append_event(task_id, EventType.TASK_FAILED.value, {"error": str(exc)})
+            if not finalize_failure:
+                self.store.transition_task(
+                    task_id,
+                    expected_statuses=(TaskStatus.RUNNING,),
+                    status=TaskStatus.RUNNING,
+                    error=str(exc),
+                    duration_ms=duration_ms,
+                )
+                raise TaskExecutionError(str(exc), stage="execution", duration_ms=duration_ms) from exc
+            self._fail_task(task_id, str(exc), duration_ms)
         else:
             # 执行成功：记录 Token 用量、更新状态为 SUCCEEDED 并推送完成事件。
             duration_ms = int((time.monotonic() - started) * 1000)
@@ -183,12 +234,14 @@ class Executor:
                 output_tokens=int(token_usage.get("output_tokens", 0)),
                 model=str(token_usage.get("model", "unknown")),
             )
-            self.store.update_task(
+            if not self.store.transition_task(
                 task_id,
+                expected_statuses=(TaskStatus.RUNNING,),
                 status=TaskStatus.SUCCEEDED,
                 result=result.output,
                 duration_ms=duration_ms,
-            )
+            ):
+                return self.store.get_task(task_id) or {}
             usage = self.store.aggregate_token_usage(task_id)
             self.store.append_event(task_id, EventType.TOKEN_UPDATED.value, {"token_usage": usage})
             self.store.append_event(
@@ -198,6 +251,21 @@ class Executor:
             )
 
         return self.store.get_task(task_id) or {}
+
+    def _fail_task(self, task_id: str, error: str, duration_ms: int) -> None:
+        """把当前非终态任务原子迁移到 FAILED，并发出失败事件。"""
+        task = self.store.get_task(task_id)
+        if not task or self.store.is_terminal(task["status"]):
+            return
+        current = TaskStatus(task["status"])
+        if self.store.transition_task(
+            task_id,
+            expected_statuses=(current,),
+            status=TaskStatus.FAILED,
+            error=error,
+            duration_ms=duration_ms,
+        ):
+            self.store.append_event(task_id, EventType.TASK_FAILED.value, {"error": error})
 
     # 取消仅对未终止任务生效；执行器在状态迁移前检查取消标记。
     def cancel(self, task_id: str) -> bool:

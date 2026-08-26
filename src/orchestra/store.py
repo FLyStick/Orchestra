@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -78,8 +79,22 @@ class SQLiteStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_events_task ON task_events(task_id, id);
                 CREATE INDEX IF NOT EXISTS idx_tokens_task ON token_usage(task_id);
+                CREATE TABLE IF NOT EXISTS retry_queue (
+                    key TEXT PRIMARY KEY,
+                    due_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_retry_due ON retry_queue(due_at);
                 """
             )
+            # 兼容旧库：包 3 状态机与重试字段通过 ALTER TABLE 增量迁移。
+            columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(tasks)")}
+            for column, definition in (
+                ("version", "INTEGER NOT NULL DEFAULT 0"),
+                ("attempt_count", "INTEGER NOT NULL DEFAULT 0"),
+                ("next_retry_at", "TEXT"),
+            ):
+                if column not in columns:
+                    self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
             self._conn.commit()
 
     # 落库即提交任务，后续执行通过 task_id 恢复上下文。
@@ -152,6 +167,9 @@ class SQLiteStore:
             "max_iterations": row["max_iterations"],
             "workspace_enabled": bool(row["workspace_enabled"]),
             "metadata": json.loads(row["metadata_json"] or "{}"),
+            "version": row["version"],
+            "attempt_count": row["attempt_count"],
+            "next_retry_at": row["next_retry_at"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "token_usage": {},
@@ -261,6 +279,98 @@ class SQLiteStore:
             "output_tokens": sum(row["output_tokens"] for row in usage),
             "calls": len(usage),
         }
+
+    # 包 3：带状态前置条件的原子迁移，用于 Worker 幂等认领与重试调度。
+    def transition_task(
+        self,
+        task_id: str,
+        *,
+        expected_statuses: tuple[TaskStatus, ...],
+        status: TaskStatus,
+        result: Any = None,
+        error: str | None = None,
+        strategy: str | None = None,
+        duration_ms: int | None = None,
+        increment_attempt: bool = False,
+        next_retry_at: str | None = None,
+    ) -> bool:
+        """只有当前状态落在 expected_statuses 内才允许迁移，返回是否更新成功。"""
+        now = _now()
+        sets = ["status = ?", "version = version + 1", "updated_at = ?"]
+        params: list[Any] = [status.value, now]
+        if increment_attempt:
+            sets.append("attempt_count = attempt_count + 1")
+        if result is not None:
+            sets.append("result_json = ?")
+            params.append(json.dumps(result, ensure_ascii=False))
+        if error is not None:
+            sets.append("error = ?")
+            params.append(error)
+        if strategy is not None:
+            sets.append("strategy = ?")
+            params.append(strategy)
+        if duration_ms is not None:
+            sets.append("duration_ms = ?")
+            params.append(duration_ms)
+        if next_retry_at is not None:
+            sets.append("next_retry_at = ?")
+            params.append(next_retry_at)
+        expected = tuple(item.value for item in expected_statuses)
+        placeholders = ", ".join("?" * len(expected))
+        params.extend([task_id, *expected])
+        with self._lock:
+            cursor = self._conn.execute(
+                f"UPDATE tasks SET {', '.join(sets)} WHERE task_id = ? AND status IN ({placeholders})",
+                params,
+            )
+            self._conn.commit()
+        return cursor.rowcount == 1
+
+    def list_non_terminal_tasks(self) -> list[dict[str, Any]]:
+        """查询所有未完成任务，供 Worker 启动恢复与故障续跑。"""
+        terminals = tuple(
+            status.value
+            for status in (TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.CANCELLED)
+        )
+        placeholders = ", ".join("?" * len(terminals))
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM tasks WHERE status NOT IN ({placeholders}) ORDER BY created_at",
+                terminals,
+            ).fetchall()
+        return [self._row_to_task(row) for row in rows]
+
+    def retry_schedule(self, key: str, due_at_ms: int) -> None:
+        """登记或更新延迟重试任务，due_at_ms 使用毫秒时间戳。"""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO retry_queue (key, due_at) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET due_at = excluded.due_at",
+                (key, int(due_at_ms)),
+            )
+            self._conn.commit()
+
+    def retry_cancel(self, key: str) -> bool:
+        """取消未到期的重试登记，返回是否成功移除。"""
+        with self._lock:
+            cursor = self._conn.execute("DELETE FROM retry_queue WHERE key = ?", (key,))
+            self._conn.commit()
+        return cursor.rowcount > 0
+
+    def retry_pop_due(self, now_ms: int | None = None, limit: int = 100) -> list[str]:
+        """弹出所有已到期的重试任务主键，供恢复/Worker 消费。"""
+        now_ms = int(now_ms) if now_ms is not None else int(time.time() * 1000)
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT key FROM retry_queue WHERE due_at <= ? ORDER BY due_at LIMIT ?",
+                (now_ms, int(limit)),
+            ).fetchall()
+            keys = [row["key"] for row in rows]
+            if keys:
+                placeholders = ", ".join("?" * len(keys))
+                self._conn.execute(f"DELETE FROM retry_queue WHERE key IN ({placeholders})", keys)
+            self._conn.commit()
+        return keys
 
     def close(self) -> None:
         """关闭数据库连接（应用退出时调用）。"""

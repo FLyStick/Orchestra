@@ -14,6 +14,7 @@
 | P4.5 组合编排 | DAG + React 正交化、节点级策略、Simple+RAG/React 路由 | 已完成 |
 | 第二阶段·包 1 | 路由评测底座、可解释评分、拆解计划校验 | 已实现（路由评测 89/89） |
 | 第二阶段·包 2 | 真实 RAG 落地：文档导入、ChromaDB、混合检索/Rerank、RAG CLI/API | 已实现（真实链路已跑通） |
+| 第二阶段·包 3 | Redis Streams + 自研状态机工作流引擎：重试、恢复、多 Worker、事件总线 | 已实现（全量测试 62 项通过 + 真实 Redis 验收） |
 
 ## 环境准备
 
@@ -27,6 +28,27 @@ pip install -r requirements-dev.txt
 pip install -e .
 python -m orchestra.main
 ```
+## 接口路由
+
+API 文档：http://127.0.0.1:8000/docs
+健康检查：http://127.0.0.1:8000/healthz
+默认 Mock LLM（无需 API Key 即可跑通全流程）；.env 里配了真实 Key 则走 OpenAI 兼容接口（当前是阿里云百炼 qwen3.7-flash）
+
+**快速验证**
+
+1. 提交任务（返回 task_id）
+
+curl -X POST http://127.0.0.1:8000/api/v1/tasks `
+  -H "Content-Type: application/json" `
+  -d '{\"query\": \"报销标准是什么\", \"session_id\": \"demo-1\"}'
+
+2. 查询任务结果
+
+curl http://127.0.0.1:8000/api/v1/tasks/<task_id>
+
+3. 订阅事件流（SSE）
+
+curl -N http://127.0.0.1:8000/api/v1/tasks/<task_id>/events
 
 ## 目录结构
 
@@ -49,6 +71,7 @@ src/orchestra/
   evals.py                       P4 黄金用例 + 路由/拆解评测
   contracts/                     核心数据契约与策略接口
   strategies/                    Simple/DAG/React 策略
+  workflow/                      Redis Streams + 自研状态机、Worker 与重试调度
   workspace/                     本地文件与内存 Workspace
 tests/                           单元测试与 API 集成测试
 多智能体编排框架实现方案.md       总体方案与实习经历条目
@@ -63,8 +86,13 @@ tests/                           单元测试与 API 集成测试
 - docs/05-business-scenarios.md  业务场景清单与验收口径
 - docs/06-development-environment.md  开发环境与部署文档
 - docs/07-dag-react-composition.md  DAG + React 组合编排设计（已实施）
-- docs/08-phase2-plan.md  第二阶段实施规划（包 1/2 已实现）
+- docs/08-phase2-plan.md  第二阶段实施规划（包 1/2/3 已实现）
+- docs/08-package1-technical-design.md  包 1 技术设计（路由与拆解底座）
 - docs/09-package2-report.md  包 2 实施报告
+- docs/09-package2-technical-design.md  包 2 技术设计（真实 RAG）
+- docs/10-package3-report.md  包 3 实施报告
+- docs/11-package3-technical-design.md  包 3 技术设计（工作流引擎）
+- docs/12-technical-documentation.md  项目全量技术文档
 - docker/README.md  Redis / ChromaDB Docker 手动部署
 
 ## 开发验证
@@ -75,4 +103,8 @@ python -m unittest discover -s tests -v
 
 # Mock 评测（不消耗真实 Token）
 python -m orchestra.evals --provider mock
+
+# 路由/拆解评测（纯规则，不消耗 Token）
+python -m orchestra.evals --mode routing
+python -m orchestra.evals --mode decomposition
 ```

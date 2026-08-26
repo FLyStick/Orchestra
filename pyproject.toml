@@ -11,9 +11,9 @@ requires-python = ">=3.11"
 license = { text = "Proprietary" }
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "fakeredis>=2.20"]
 api = ["fastapi>=0.110", "uvicorn>=0.29", "pydantic>=2.6"]
-workflow = ["temporalio>=1.4"]
+workflow = ["redis>=5.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

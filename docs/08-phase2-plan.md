@@ -1,10 +1,11 @@
 # Orchestra 第二阶段实施规划
 
-> 状态：包 1、包 2 已实现，包 3 待按序实施
+> 状态：包 1、包 2、包 3 已实现
 >
 > 包 1 落地：ScorerV2 特征/置信度、RoutingDecision 可解释因子、DecompositionPlanner + PlanValidator（场景模板 + LLM 规划，校验失败回退规则）、Simple 低置信/RAG 失败升级闭环、路由与拆解黄金用例与评测入口。
 > 包 2 落地：真实 RAG 已跑通（文档解析/分块、Embedding、ChromaDB、混合检索 + Rerank、CLI/API/Tool 接入），详见 [docs/09-package2-report.md](docs/09-package2-report.md)。
-> 日期：2026-08-20
+> 包 3 落地：Redis Streams + 自研状态机工作流（WorkflowDriver/EventBus/RetryScheduler、SQLite 驱动 + Redis 驱动/Worker、崩溃恢复与指数退避），详见 [docs/10-package3-report.md](docs/10-package3-report.md) 与技术设计文档 [docs/11-package3-technical-design.md](docs/11-package3-technical-design.md)。
+> 日期：2026-08-25（项目收尾）
 > 基线：P4.5 DAG + React 组合编排已落地（docs/07）
 
 ## 1. 目标与定位
@@ -22,7 +23,7 @@
 - 工作流：Redis Streams + 自研状态机；Redis 未部署时保留 SQLite/内存驱动作为开发兜底。
 - 外部依赖安装到 Conda 环境 `orchestra`（C:\Users\20235\.conda\envs\orchestra）。
 - Redis、ChromaDB 等需要部署的组件编写 Docker 文档，由你手动部署。
-- `.env` 预留第二阶段接口变量，包括 Embedding 模型与存储路径，实施时按包启用。
+- `.env` 已启用第二阶段接口变量，包括 Embedding 模型、存储路径与工作流驱动配置。
 
 ## 2. 目标架构
 
@@ -83,12 +84,12 @@ Input → feature extraction → score + confidence + reasons
 
 ### 3.3 验收标准
 
-- 路由评测集达到 60 条以上，Mock + Openai 两档可重复执行。
-- 路由准确率达到目标值（90% 为占位，验收后回填实测）。
-- 拆解计划校验对环、缺依赖、非法工具可以明确报错。
-- Simple 升级闭环有单元测试与 SSE 事件。
+- 路由评测集 89 条，`--mode routing` 89/89 通过，平均置信度 0.8042，低置信 14 条进入升级/复核闭环。
+- 拆解评测 `--mode decomposition` 6/6 通过，计划合法率 6/6，子任务召回率均值 1.0。
+- `PlanValidator` 对环、缺依赖、非法工具可以明确报错，并有对应单测。
+- Simple 升级闭环有单元测试与 `routing.escalated` SSE 事件。
 
-交付物：`docs/golden/routing-cases.json`、`ScorerV2`、`DecompositionPlanner`、`PlanValidator`、评测报告入口。
+交付物：`docs/golden/routing-cases.json`、`ScorerV2`、`DecompositionPlanner`、`PlanValidator`、评测入口；技术设计见 [docs/08-package1-technical-design.md](docs/08-package1-technical-design.md)。
 
 ## 4. 包 2：真实 RAG 落地（已实现）
 
@@ -152,7 +153,7 @@ Input → feature extraction → score + confidence + reasons
 
 ### 4.10 验收标准
 
-- `[已实现]` 人事、风控、财务知识库通过真实流程索引，并保留 Mock 兜底。
+- `[已实现]` 人事、风控、财务知识库通过真实流程索引（15 份演示文档入库），并保留 Mock 兜底。
 - `[待回填]` 检索命中率与溯源率达到目标占位（hit@5 >= 85%，溯源率 >= 90%），待黄金检索用例评测。
 - `[已实现]` 文档导入、索引、检索 API 可操作；ChromaDB 数据持久化重启复用待复测。
 - `[已实现]` `.env` 中 Embedding、ChromaDB 与 Rerank 变量可切换。
@@ -166,7 +167,8 @@ Input → feature extraction → score + confidence + reasons
 - API：`POST/GET /api/v2/documents`、`POST /api/v2/documents/ingest`、`DELETE /api/v2/documents/{document_id}`、`POST /api/v2/knowledge/search`。
 - CLI：`python -m orchestra.rag_cli seed|ingest|search|list|delete`。
 - 真实链路验证：Docker ChromaDB（127.0.0.1:8001）+ DashScope Embedding + MaaS Rerank 下，`seed` 成功索引 hr/risk/finance 共 15 份演示文档；`search --query "公司年假有几天" --department hr` 命中 `hr/leave-policy.md`，`reranked=true`，实测约 736ms。
-- 测试：`python -m unittest discover -s tests -v` 全量 55 项通过。
+- 测试：包 2 验收时全量 55 项通过（包 3 落地后全量 62 项）。
+- 文档：[docs/09-package2-report.md](docs/09-package2-report.md) 与 [docs/09-package2-technical-design.md](docs/09-package2-technical-design.md)。
 
 检索评测占位指标（hit@5、MRR）尚未回填，待黄金检索用例沉淀后进行。
 
@@ -231,6 +233,16 @@ PENDING -> ROUTING -> RUNNING -> SUCCEEDED
 - 服务重启后未完成任务自动续跑。
 - Redis 未部署环境下，SqliteWorkflowDriver 可运行全部现有测试。
 
+### 5.8 实施记录
+
+- 代码：`src/orchestra/contracts/workflow.py`、`src/orchestra/workflow/`（driver/redis_driver/worker/event_bus/retry/retry_scheduler/state_machine）。
+- 接入：`create_app` 按 `ORCHESTRA_WORKFLOW_DRIVER` 选择驱动；Redis 不可用时自动回退 SQLite。
+- 状态机：`PENDING -> ROUTING -> RUNNING -> SUCCEEDED`，支持 RETRYING/WAITING_DEPENDENCY/FAILED/CANCELLED。
+- 重试：指数退避 + 抖动，失败次数/原因/下次重试时间可查询；SQLite 重试队列与 Redis ZSET + Lua 两种实现。
+- 测试：`tests/test_workflow.py` 新增 7 项，全量 62 项通过。
+- 真实 Redis 验收：端到端任务状态 `succeeded`，消费组 Pending 为 `0`，命令已 XACK，事件流正常写入。
+- 文档：[docs/10-package3-report.md](docs/10-package3-report.md) 与 [docs/11-package3-technical-design.md](docs/11-package3-technical-design.md)。
+
 ## 6. 外部依赖
 
 | 包 | 依赖 | 用途 |
@@ -259,9 +271,9 @@ Redis / ChromaDB 的容器编排文件已放入 `docker/`，由你手动部署�
 - ChromaDB 本地模式无需 Docker，`ORCHESTRA_CHROMA_PATH` 指向 `data/chroma` 即可。
 - Embedding 本地模型首次运行需要联网下载，缓存方案见 `docker/README.md`；也可使用 OpenAI 兼容接口，无需容器。
 
-## 8. `.env` 预留变量
+## 8. `.env` 已启用变量
 
-以下变量在第二阶段实施时逐步启用，先写入 `.env.example` 并注释：
+以下变量已随包 1/2/3 落地并写入 `.env.example`，部署时复制为 `.env` 按需修改：
 
 | 变量 | 阶段 | 默认建议 | 说明 |
 | --- | --- | --- | --- |
@@ -272,6 +284,7 @@ Redis / ChromaDB 的容器编排文件已放入 `docker/`，由你手动部署�
 | `ORCHESTRA_EMBEDDING_MODEL` | 2 | `qwen3.7-text-embedding` | DashScope Embedding 模型名 |
 | `ORCHESTRA_EMBEDDING_DIM` | 2 | `0` | 向量维度，0 表示自动识别 |
 | `ORCHESTRA_EMBEDDING_API_KEY` | 2 | 空 | API Embedding 密钥 |
+| `ORCHESTRA_EMBEDDING_BASE_URL` | 2 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | Embedding API 地址 |
 | `ORCHESTRA_CHROMA_PATH` | 2 | `data/chroma` | 本地持久化目录 |
 | `ORCHESTRA_CHROMA_HOST/PORT` | 2 | `127.0.0.1/8001` | ChromaDB Server 模式 |
 | `ORCHESTRA_COLLECTION_PREFIX` | 2 | `orchestra` | Collection 前缀 |
@@ -281,6 +294,7 @@ Redis / ChromaDB 的容器编排文件已放入 `docker/`，由你手动部署�
 | `ORCHESTRA_RERANK_ENABLED` | 2 | `false` | 是否启用 Rerank |
 | `ORCHESTRA_RERANK_MODEL` | 2 | `gte-rerank-v2` | MaaS Rerank 模型 |
 | `ORCHESTRA_RERANK_BASE_URL` | 2 | 空 | MaaS Rerank 服务地址 |
+| `ORCHESTRA_RERANK_API_KEY` | 2 | 空 | MaaS Rerank 密钥 |
 | `ORCHESTRA_WORKFLOW_DRIVER` | 3 | `sqlite` | `sqlite`/`redis` |
 | `ORCHESTRA_REDIS_URL` | 3 | `redis://127.0.0.1:6379/0` | Redis 连接地址 |
 | `ORCHESTRA_REDIS_STREAM_PREFIX` | 3 | `orchestra` | Stream Key 前缀 |
@@ -295,15 +309,15 @@ Redis / ChromaDB 的容器编排文件已放入 `docker/`，由你手动部署�
 
 | 阶段 | 周期 | 入口 | 出口 |
 | --- | --- | --- | --- |
-| 包 1：路由与拆解底座 | 约 2-3 周 | 扩展现有 Router/evals | 路由回归通过，拆解计划可验证 |
+| 包 1：路由与拆解底座 | 约 2-3 周 | 扩展现有 Router/evals | 已实现（路由评测 89/89、拆解 6/6），技术设计见 docs/08 |
 | 包 2：真实 RAG 落地 | 约 2-3 周 | 依赖包 1 评测集 | 已实现（真实链路跑通，检索评测指标待回填） |
-| 包 3：Redis Streams 工作流 | 约 3 周 | 依赖包 2 稳定链路 | 重试/恢复/多 Worker 验收通过 |
+| 包 3：Redis Streams 工作流 | 约 3 周 | 依赖包 2 稳定链路 | 已实现（SQLite 兜底跑通全部测试，Redis 真实验收见 10） |
 
 ## 10. 风险与预案
 
 | 风险 | 影响 | 预案 |
 | --- | --- | --- |
-| Redis 暂未部署 | 工作流无法真实验收 | 保留 SqliteWorkflowDriver，接口先行 |
+| Redis 运维/多实例容量 | 生产环境可用性 | 开发默认 SQLite；Docker 部署 Redis，XAUTOCLAIM + 消费组支持多 Worker 补偿 |
 | Embedding 模型下载受限 | 真实 RAG 无法索引 | 优先 OpenAI 兼容接口，本地模型作为可选项 |
 | 真实业务文档不足 | 部门评测质量受限 | 先用脱敏样例与黄金用例，权限到位后替换 |
 | ChromaDB 单机容量 | 文档量大后检索退化 | 预留 ChromaDB Server 与按部门 Collection 分片 |
@@ -311,7 +325,8 @@ Redis / ChromaDB 的容器编排文件已放入 `docker/`，由你手动部署�
 
 ## 11. 预期成果与简历量化占位
 
-- 路由准确率目标：`>= 90%`（验收后回填实测）。
+- 路由准确率：89/89（评测集内 100%）；拆解计划合法率 6/6。
+- 全量单元测试：62 项通过。
 - 检索效果目标：`hit@5 >= 85%`、`MRR >= 0.8`。
 - 部门 Agent 通过率：人事/风控按黄金用例分别回填。
 - 工作流稳定性：节点重试成功率、故障恢复时间、重复执行率回填实测。
@@ -322,4 +337,8 @@ Redis / ChromaDB 的容器编排文件已放入 `docker/`，由你手动部署�
 - [docs/02-technology-selection.md](docs/02-technology-selection.md)：技术选型
 - [docs/05-business-scenarios.md](docs/05-business-scenarios.md)：业务场景清单
 - [docs/06-development-environment.md](docs/06-development-environment.md)：开发环境
-
+- [docs/08-package1-technical-design.md](docs/08-package1-technical-design.md)：包 1 技术设计
+- [docs/09-package2-report.md](docs/09-package2-report.md)：包 2 实施报告
+- [docs/09-package2-technical-design.md](docs/09-package2-technical-design.md)：包 2 技术设计
+- [docs/10-package3-report.md](docs/10-package3-report.md)：包 3 实施报告
+- [docs/11-package3-technical-design.md](docs/11-package3-technical-design.md)：包 3 技术设计

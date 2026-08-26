@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncGenerator
@@ -19,12 +20,17 @@ from .config import Settings, get_settings
 from .contracts.task import TaskInput, TokenBudget
 from .rag.service import create_rag_stack
 from .executor import Executor
+from .workflow.driver import SqliteWorkflowDriver, WorkflowDriver
+from .workflow.event_bus import SqliteEventBus
+from .workflow.retry import RetryPolicy
 from .llm import LLMService, create_llm_provider
 from .router import RuleRouter
 from .scenarios import ALL_SCENARIOS
 from .store import SQLiteStore
 from .tools import create_tool_registry
 from .workspace.local_workspace import LocalWorkspace
+
+logger = logging.getLogger(__name__)
 
 
 class BudgetModel(BaseModel):
@@ -138,11 +144,76 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         workspace_root=settings.workspace_dir,
         tool_registry=tool_registry,
     )
+    retry_policy = RetryPolicy(
+        max_attempts=settings.retry_max_attempts,
+        base_delay_ms=settings.retry_base_delay_ms,
+        max_delay_ms=settings.retry_max_delay_ms,
+        jitter_ms=settings.retry_jitter_ms,
+    )
+    sqlite_driver = SqliteWorkflowDriver(
+        store,
+        executor,
+        event_bus=SqliteEventBus(store),
+        retry_policy=retry_policy,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        # 应用启动时无需额外初始化；关闭时释放数据库连接。
+        selected_driver: WorkflowDriver = sqlite_driver
+        redis_driver = None
+        worker = None
+        if settings.workflow_driver == "redis":
+            import redis.asyncio as aioredis
+
+            from .workflow.redis_driver import RedisStreamWorkflowDriver
+            from .workflow.worker import RedisWorkflowWorker
+
+            try:
+                redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
+                redis_driver = RedisStreamWorkflowDriver(
+                    store,
+                    executor,
+                    redis_client,
+                    settings,
+                    retry_policy=retry_policy,
+                )
+                await redis_driver.start()
+                selected_driver = redis_driver
+                worker = RedisWorkflowWorker(
+                    driver=redis_driver,
+                    redis=redis_client,
+                    commands_stream=redis_driver.commands_stream,
+                    consumer_group=redis_driver.consumer_group,
+                    consumer_name=redis_driver.consumer_name,
+                    retry_scheduler=redis_driver.retry_scheduler,
+                    concurrency=settings.worker_concurrency,
+                )
+                await worker.start()
+            except Exception as exc:
+                # Redis 未部署/连接失败时回退 SQLite 驱动，本地开发不阻塞。
+                logger.warning("Redis 工作流不可用，回退 SQLite 驱动：%s", exc)
+                if worker:
+                    try:
+                        await worker.stop()
+                    except Exception:
+                        pass
+                    worker = None
+                if redis_driver:
+                    try:
+                        await redis_driver.close()
+                    except Exception:
+                        pass
+                    redis_driver = None
+                selected_driver = sqlite_driver
+        app.state.workflow_driver = selected_driver
+        await selected_driver.start()
         yield
+        if worker:
+            await worker.stop()
+        if redis_driver:
+            await redis_driver.close()
+        else:
+            await selected_driver.close()
         store.close()
 
     app = FastAPI(title="Orchestra", version="0.2.0", lifespan=lifespan)
@@ -151,6 +222,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.executor = executor
     app.state.retrieval_service = retrieval_service
     app.state.ingestion_service = ingestion_service
+    app.state.workflow_driver = sqlite_driver
 
     @app.get("/")
     async def root() -> dict[str, str]:
@@ -174,7 +246,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             包含 task_id 的字典，前端凭此轮询或订阅事件。
         """
         task_input = _to_task_input(payload)
-        task_id = executor.submit(task_input)
+        task_id = await app.state.workflow_driver.submit(task_input)
         return {"task_id": task_id}
 
     @app.get("/api/v1/tasks/{task_id}")
@@ -210,7 +282,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         if store.get_task(task_id) is None:
             raise HTTPException(status_code=404, detail="task not found")
-        if not executor.cancel(task_id):
+        if not await app.state.workflow_driver.cancel(task_id):
             raise HTTPException(status_code=409, detail="task already terminal")
         return {"task_id": task_id, "status": "cancelled"}
 

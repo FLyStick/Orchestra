@@ -59,6 +59,16 @@ class Settings:
     rag_chunk_size: int = field(default_factory=lambda: int(os.getenv("ORCHESTRA_RAG_CHUNK_SIZE", "512")))
     rag_chunk_overlap: int = field(default_factory=lambda: int(os.getenv("ORCHESTRA_RAG_CHUNK_OVERLAP", "64")))
     rag_manifest_path: str = field(default_factory=lambda: os.getenv("ORCHESTRA_RAG_MANIFEST_PATH", "data/rag_manifest.json"))
+    # 包 3：工作流驱动与 Redis Streams / 延迟重试配置。
+    workflow_driver: str = field(default_factory=lambda: os.getenv("ORCHESTRA_WORKFLOW_DRIVER", "sqlite"))
+    redis_url: str = field(default_factory=lambda: os.getenv("ORCHESTRA_REDIS_URL", "redis://127.0.0.1:6379/0"))
+    redis_stream_prefix: str = field(default_factory=lambda: os.getenv("ORCHESTRA_REDIS_STREAM_PREFIX", "orchestra"))
+    redis_consumer_group: str = field(default_factory=lambda: os.getenv("ORCHESTRA_REDIS_CONSUMER_GROUP", "orchestra-workers"))
+    worker_concurrency: int = field(default_factory=lambda: int(os.getenv("ORCHESTRA_WORKER_CONCURRENCY", "4")))
+    retry_max_attempts: int = field(default_factory=lambda: int(os.getenv("ORCHESTRA_RETRY_MAX_ATTEMPTS", "3")))
+    retry_base_delay_ms: int = field(default_factory=lambda: int(os.getenv("ORCHESTRA_RETRY_BASE_DELAY_MS", "1000")))
+    retry_max_delay_ms: int = field(default_factory=lambda: int(os.getenv("ORCHESTRA_RETRY_MAX_DELAY_MS", "60000")))
+    retry_jitter_ms: int = field(default_factory=lambda: int(os.getenv("ORCHESTRA_RETRY_JITTER_MS", "200")))
 
     @property
     def db_file(self) -> Path:

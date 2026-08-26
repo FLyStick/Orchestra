@@ -1,7 +1,7 @@
 # 技术选型决策记录
 
 > 决策时间：2026-08-18
-> 状态：P1 已确认，P2 落地时按环境调整
+> 状态：P1-P4.5 已落地；第二阶段包 1/2/3 已实现（2026-08-25）
 
 ## 1. 总体实现方式
 
@@ -21,7 +21,7 @@
 | Celery | 简单、Python 生态 | 长任务状态与恢复能力弱 |
 | Redis Streams + 自研状态机 | 轻量、可控 | 重试/恢复/调试需要自研 |
 
-结论：优先 Temporal；若公司环境不可用，降级为 Redis Streams + 自研状态机，但需保留相同接口边界。
+结论：最终未引入 Temporal；包 3 采用 Redis Streams + 自研状态机（SQLite 兜底），保留统一 `WorkflowDriver` 接口，后续可平滑替换为 Temporal。
 
 ## 3. 语言与框架
 
@@ -39,22 +39,23 @@
 
 | 组件 | 用途 |
 | --- | --- |
-| Redis | Workspace 中间结果、事件流、缓存、分布式锁 |
-| PostgreSQL/MySQL | 任务表、事件表、token_usage、评测记录 |
+| SQLite | 任务表、事件表、token_usage、重试投影（主存储） |
+| ChromaDB | 知识向量库，按部门 Collection 隔离（包 2） |
+| Redis | 工作流命令流 / 事件流、延迟重试 ZSET（包 3，可回退） |
 
 ## 6. 模型与检索
 
 - LLM：OpenAI API / 开源模型，通过统一 Provider 接口接入
 - 模型降级：预算超限或调用失败时按配置降级
-- 检索：复用 AgentChat 的 Milvus / ES / ChromaDB + RAG 链路，不重复建设
+- 检索：包 2 已落地 ChromaDB + BM25 向量 RRF 混合检索 + MaaS Rerank 精排，支持 hybrid/vector/keyword 三模式
 
 ## 7. 决策汇总
 
 | ID | 决策 | 状态 | 替代方案 |
 | --- | --- | --- | --- |
 | ADR-001 | 借鉴 Shannon 架构自研 | 已确认 | 直接部署 Shannon、LangGraph 扩展 |
-| ADR-002 | 工作流引擎使用 Temporal | 已确认 | Redis Streams + 自研状态机 |
+| ADR-002 | 工作流引擎采用 Redis Streams + 自研状态机 | 已落地（包 3） | Temporal（预留 WorkflowDriver 替换） |
 | ADR-003 | Python + FastAPI | 已确认 | Go、Node.js |
 | ADR-004 | REST + SSE 先行 | 已确认 | gRPC 为主 |
-| ADR-005 | Redis + PostgreSQL | 已确认 | 仅文件系统 + SQLite（原型期） |
-| ADR-006 | 复用现有 RAG 检索能力 | 已确认 | 自研检索服务 |
+| ADR-005 | SQLite + Redis + ChromaDB | 已落地 | PostgreSQL（多实例治理后再评估） |
+| ADR-006 | 自研 RAG：ChromaDB + RRF + MaaS Rerank | 已落地（包 2） | Milvus / ES（数据规模增长后评估） |

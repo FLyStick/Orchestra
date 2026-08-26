@@ -45,7 +45,7 @@
 | --- | --- | --- | --- |
 | 1 | 人事制度问答 Agent | RAG 检索 + ReAct 工具循环 | P4 已落地 |
 | 2 | 风控条款审查 Agent | DAG 三阶段 | P4 已落地 |
-| 3 | 财务报销咨询 Agent | Simple + RAG | 后续扩展 |
+| 3 | 财务报销咨询 Agent | Simple + RAG | P4.5 / 包 2 已落地 |
 
 ## 6. P4 落地口径
 
@@ -73,5 +73,16 @@ python -m orchestra.evals --provider openai --output data/eval-report.json
 
 - 各部门联系人、文档与数据权限
 - 评测用的真实业务用例是否允许脱敏使用
-- 是否接入飞书作为演示入口
+- 飞书作为可选接入入口，第一版未作为核心依赖
 - 最终采用哪些量化指标写进简历，需验收后回填实测值
+
+## 9. 项目收尾状态（2026-08-25）
+
+包 1/2/3 已全部实现并收尾，量化口径以实测/验收回填为准：
+
+- 路由评测：89/89 通过，平均置信度 0.8042。
+- 真实 RAG：15 份演示文档入库，混合检索 + Rerank 真实链路跑通。
+- 工作流：全量测试 62 项通过，真实 Redis 验收 succeeded / Pending 0 / XACK 正常。
+- 人事/风控 P4 量化（87%、45min -> 8min）仍为验收占位，需真实业务验收后回填。
+
+相关文档：[docs/08-package1-technical-design.md](docs/08-package1-technical-design.md)、[docs/09-package2-technical-design.md](docs/09-package2-technical-design.md)、[docs/11-package3-technical-design.md](docs/11-package3-technical-design.md)。
